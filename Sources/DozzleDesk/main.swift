@@ -1,0 +1,10 @@
+import AppKit
+
+// Accessory app: no Dock icon, no main menu, never steals focus.
+MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    app.setActivationPolicy(.accessory)
+    withExtendedLifetime(delegate) { app.run() }
+}
