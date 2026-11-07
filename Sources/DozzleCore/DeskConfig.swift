@@ -6,6 +6,7 @@ import Foundation
 ///   --grace 120                       seconds to keep retrying before exiting
 ///   --stall 25                        seconds of silence that count as a dead connection
 ///   --opacity 1.0                     panel opacity, 0.3–1.0
+///   --no-card / --card                dropdown only / show the desktop card (this launch only)
 ///   --render-png out.png              dev: render one frame to PNG and exit
 ///   --render-when live|lost           dev: which state to render (default live)
 ///   --render-delay 3                  dev: seconds to wait in that state before rendering
@@ -16,6 +17,8 @@ public struct DeskConfig: Sendable, Equatable {
     public var grace: TimeInterval
     public var stallTimeout: TimeInterval
     public var opacity: Double
+    /// `--no-card` / `--card` override the saved "Show Desktop Card" choice for this launch.
+    public var showCard: Bool?
     public var renderPNG: String?
     public var renderWhen: String
     public var renderDelay: TimeInterval
@@ -43,7 +46,7 @@ public struct DeskConfig: Sendable, Equatable {
         }
         let rawURL = flag("url") ?? defaults.string(forKey: "url") ?? defaultURL
         let url = normalize(rawURL) ?? URL(string: defaultURL)!
-        return DeskConfig(
+        var config = DeskConfig(
             baseURL: url,
             grace: max(5, number("grace") ?? 120),
             stallTimeout: max(5, number("stall") ?? 25),
@@ -51,6 +54,9 @@ public struct DeskConfig: Sendable, Equatable {
             renderPNG: flag("render-png"),
             renderWhen: flag("render-when") ?? "live",
             renderDelay: max(0, Double(flag("render-delay") ?? "") ?? 3))
+        if arguments.contains("--no-card") { config.showCard = false }
+        if arguments.contains("--card") { config.showCard = true }
+        return config
     }
 
     static func normalize(_ raw: String) -> URL? {

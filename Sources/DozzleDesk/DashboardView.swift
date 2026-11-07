@@ -116,15 +116,22 @@ struct DashboardView: View {
                 .disabled(status.phase == .sleeping || status.phase == .preflight)
             Spacer(minLength: 0)
             Menu {
-                Toggle("Click-through", isOn: Binding(
-                    get: { model.clickThrough },
-                    set: { model.actions?.setClickThrough($0) }))
-                Picker("Opacity", selection: Binding(
-                    get: { model.opacity },
-                    set: { model.actions?.setOpacity($0) })) {
-                    ForEach([1.0, 0.85, 0.7, 0.5], id: \.self) { Text("\(Int($0 * 100))%").tag($0) }
+                Toggle("Show Desktop Card", isOn: Binding(
+                    get: { model.showCard },
+                    set: { model.actions?.setShowCard($0) }))
+                Divider()
+                Group {
+                    Toggle("Click-through", isOn: Binding(
+                        get: { model.clickThrough },
+                        set: { model.actions?.setClickThrough($0) }))
+                    Picker("Opacity", selection: Binding(
+                        get: { model.opacity },
+                        set: { model.actions?.setOpacity($0) })) {
+                        ForEach([1.0, 0.85, 0.7, 0.5], id: \.self) { Text("\(Int($0 * 100))%").tag($0) }
+                    }
+                    Button("Reset Position") { model.actions?.resetPosition() }
                 }
-                Button("Reset Position") { model.actions?.resetPosition() }
+                .disabled(!model.showCard)
             } label: {
                 Image(systemName: "slider.horizontal.3")
             }

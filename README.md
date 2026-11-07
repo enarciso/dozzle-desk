@@ -11,6 +11,12 @@ It never takes focus and has no Dock icon.
   and buttons for Open Dozzle, Reconnect, card options (click-through, opacity, reset position) and Quit.
 - **Right-click** (or Control-click) shows a classic menu with the same commands.
 
+**Dropdown-only mode.** Turn off **Show Desktop Card** in the dropdown's options button or the
+right-click menu. The card closes completely (it does no work while closed), and the choice is
+remembered across launches. Launching DozzleDesk again while it's running opens the dropdown. If the
+app has to close (Dozzle unreachable), the card briefly reappears with the closing message, so it never
+vanishes silently. `--no-card` / `--card` override the saved choice for a single launch.
+
 ## What it shows
 - **Host tiles:**
   - CPU % with a sparkline (summed container CPU ÷ cores)

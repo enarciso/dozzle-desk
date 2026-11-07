@@ -8,6 +8,7 @@ struct DeskActions {
     var reconnect: () -> Void
     var setClickThrough: (Bool) -> Void
     var setOpacity: (Double) -> Void
+    var setShowCard: (Bool) -> Void
     var resetPosition: () -> Void
     var quit: () -> Void
 }
@@ -23,6 +24,8 @@ final class DeskModel: ObservableObject {
     var actions: DeskActions?
     @Published var clickThrough = false
     @Published var opacity: Double = 1
+    /// false = dropdown-only mode.
+    @Published var showCard = true
     var dragChanged: (() -> Void)?
     var dragEnded: (() -> Void)?
 

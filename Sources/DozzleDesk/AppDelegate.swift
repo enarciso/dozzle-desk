@@ -35,13 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.lock = lock
 
-        let panel = DesktopPanel(model: model, opacity: UserDefaults.standard.object(forKey: "opacity") == nil
-                                 ? config.opacity : UserDefaults.standard.double(forKey: "opacity"))
-        panel.ignoresMouseEvents = UserDefaults.standard.bool(forKey: "clickThrough")
-        panel.orderFrontRegardless()
-        self.panel = panel
-        model.clickThrough = panel.ignoresMouseEvents
-        model.opacity = panel.alphaValue
+        let defaults = UserDefaults.standard
+        model.clickThrough = defaults.bool(forKey: "clickThrough")
+        model.opacity = defaults.object(forKey: "opacity") == nil ? config.opacity : defaults.double(forKey: "opacity")
+        model.showCard = config.showCard ?? (defaults.object(forKey: "showDesktopCard") as? Bool ?? true)
+        if model.showCard { openPanel() }
 
         let menuBar = MenuBarController(model: model, endpoint: config.displayHost)
         self.menuBar = menuBar
@@ -69,6 +67,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.panel?.alphaValue = value
                 self?.model.opacity = value
                 UserDefaults.standard.set(value, forKey: "opacity")
+            },
+            setShowCard: { [weak self] on in
+                guard let self else { return }
+                self.model.showCard = on
+                UserDefaults.standard.set(on, forKey: "showDesktopCard")
+                if on { self.openPanel() } else { self.closePanel() }
             },
             resetPosition: { [weak self] in self?.panel?.resetPosition() },
             quit: { [weak self] in self?.shutdown(reason: .userQuit) })
@@ -100,7 +104,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar?.update(status)
     }
 
+    // MARK: Desktop card
+
+    /// Creates the card (restoring its saved position). No-op if it's already open.
+    private func openPanel() {
+        guard panel == nil else {
+            panel?.orderFrontRegardless()
+            return
+        }
+        let panel = DesktopPanel(model: model, opacity: model.opacity)
+        panel.ignoresMouseEvents = model.clickThrough
+        panel.orderFrontRegardless()
+        self.panel = panel
+    }
+
+    /// Fully closes the card (not just hides it), so it does no layout or drawing work.
+    private func closePanel() {
+        panel?.orderOut(nil)
+        panel?.close()
+        panel = nil
+    }
+
     private func linkExited(_ reason: ExitReason) {
+        // With the card turned off, bring it back just for the closing message, so the app
+        // never disappears silently. The saved "card off" preference is left unchanged.
+        if reason != .userQuit { openPanel() }
         switch reason {
         case .userQuit:
             shutdown(reason: reason)
@@ -167,7 +195,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         })
         distributedObservers.append(DistributedNotificationCenter.default().addObserver(
             forName: showNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.panel?.orderFrontRegardless() }
+            // Launching again while running: bring the card forward, or open the dropdown if the card is off.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let panel = self.panel { panel.orderFrontRegardless() } else { self.menuBar?.showPopover() }
+            }
         })
     }
 

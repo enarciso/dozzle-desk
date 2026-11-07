@@ -11,7 +11,10 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
     private let popover = NSPopover()
     private let menu = NSMenu()
     private let headerItem = NSMenuItem(title: "Connecting…", action: nil, keyEquivalent: "")
+    private let showCardItem = NSMenuItem(title: "Show Desktop Card", action: nil, keyEquivalent: "")
     private let clickThroughItem = NSMenuItem(title: "Click-through", action: nil, keyEquivalent: "")
+    private let opacityItem = NSMenuItem(title: "Opacity", action: nil, keyEquivalent: "")
+    private lazy var resetItem = makeItem("Reset Position", shortcut: "") { $0.resetPosition() }
     private var opacityItems: [NSMenuItem] = []
     private var lastHeader = ""
     private var lastTint: NSColor?
@@ -55,7 +58,8 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         }
     }
 
-    private func showPopover() {
+    func showPopover() {
+        guard !popover.isShown else { return }
         guard let button = item.button else { return }
         // Built fresh each time and released on close, so nothing renders while it's hidden.
         let controller = NSHostingController(rootView: DashboardView(model: model, style: .popover))
@@ -83,6 +87,10 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         menu.addItem(makeItem("Open Dozzle", shortcut: "o") { $0.openDozzle() })
         menu.addItem(makeItem("Reconnect Now", shortcut: "r") { $0.reconnect() })
         menu.addItem(.separator())
+        menu.autoenablesItems = false
+        showCardItem.target = self
+        showCardItem.action = #selector(toggleShowCard)
+        menu.addItem(showCardItem)
         clickThroughItem.target = self
         clickThroughItem.action = #selector(toggleClickThrough)
         menu.addItem(clickThroughItem)
@@ -95,10 +103,9 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
             opacityMenu.addItem(mi)
             opacityItems.append(mi)
         }
-        let opacityItem = NSMenuItem(title: "Opacity", action: nil, keyEquivalent: "")
         opacityItem.submenu = opacityMenu
         menu.addItem(opacityItem)
-        menu.addItem(makeItem("Reset Position", shortcut: "") { $0.resetPosition() })
+        menu.addItem(resetItem)
         menu.addItem(.separator())
         menu.addItem(makeItem("Quit DozzleDesk", shortcut: "q") { $0.quit() })
     }
@@ -120,6 +127,10 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         box.run(actions)
     }
 
+    @objc private func toggleShowCard() {
+        model.actions?.setShowCard(!model.showCard)
+    }
+
     @objc private func toggleClickThrough() {
         model.actions?.setClickThrough(!model.clickThrough)
     }
@@ -130,6 +141,9 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        showCardItem.state = model.showCard ? .on : .off
+        // Card-only options do nothing in dropdown-only mode.
+        for mi in [clickThroughItem, opacityItem, resetItem] { mi.isEnabled = model.showCard }
         clickThroughItem.state = model.clickThrough ? .on : .off
         for mi in opacityItems {
             mi.state = abs((mi.representedObject as? Double ?? 0) - model.opacity) < 0.01 ? .on : .off

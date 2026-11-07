@@ -109,5 +109,9 @@ private func at(_ s: TimeInterval) -> Date { t0.addingTimeInterval(s) }
         #expect(d.baseURL.absoluteString == DeskConfig.defaultURL)
         #expect(d.grace == 120)
         #expect(d.stallTimeout == 25)
+        #expect(d.showCard == nil) // no override: the saved preference decides
+        let fresh = { UserDefaults(suiteName: "dozzledesk-tests-\(UUID())")! }
+        #expect(DeskConfig.load(arguments: ["x", "--no-card"], defaults: fresh()).showCard == false)
+        #expect(DeskConfig.load(arguments: ["x", "--card"], defaults: fresh()).showCard == true)
     }
 }
