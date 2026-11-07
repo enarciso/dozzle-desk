@@ -10,14 +10,17 @@ struct DeskActions {
     var setOpacity: (Double) -> Void
     var setShowCard: (Bool) -> Void
     var resetPosition: () -> Void
+    var changeURL: () -> Void
     var quit: () -> Void
 }
 
 @MainActor
 final class DeskModel: ObservableObject {
-    let config: DeskConfig
+    @Published private(set) var config: DeskConfig
     @Published private(set) var status: LinkStatus
     @Published var finalMessage: String?
+    /// The closing message offers "Change URL…" (unreachable at launch, login required).
+    @Published var offerChangeURL = false
     /// Solid background instead of a live blur (offscreen PNG rendering can't capture blur).
     var renderMode = false
     var open: (URL) -> Void = { _ in }
@@ -38,6 +41,15 @@ final class DeskModel: ObservableObject {
     init(config: DeskConfig) {
         self.config = config
         self.status = .initial(endpoint: config.displayHost)
+    }
+
+    /// Switching to another Dozzle: forget everything shown for the old one.
+    func reset(config: DeskConfig) {
+        self.config = config
+        latest = nil
+        finalMessage = nil
+        offerChangeURL = false
+        status = .initial(endpoint: config.displayHost)
     }
 
     func receive(_ s: LinkStatus) {

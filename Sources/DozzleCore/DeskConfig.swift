@@ -2,16 +2,20 @@ import Foundation
 
 /// Settings resolved from (highest priority first) CLI flags, UserDefaults, defaults.
 ///
-///   --url http://narciso-linux:9900   Dozzle base URL (include DOZZLE_BASE path if set)
+///   --url http://dozzle.lan:8080      Dozzle base URL for this launch (include the base path if Dozzle has one)
 ///   --grace 120                       seconds to keep retrying before exiting
 ///   --stall 25                        seconds of silence that count as a dead connection
 ///   --opacity 1.0                     panel opacity, 0.3–1.0
 ///   --no-card / --card                dropdown only / show the desktop card (this launch only)
+///   --check URL                       test a Dozzle URL, print the result and exit
 ///   --render-png out.png              dev: render one frame to PNG and exit
 ///   --render-when live|lost           dev: which state to render (default live)
 ///   --render-delay 3                  dev: seconds to wait in that state before rendering
+///
+/// There is no built-in server address: without `--url` or a saved one, the app asks for it.
 public struct DeskConfig: Sendable, Equatable {
-    public static let defaultURL = "http://narciso-linux:9900"
+    /// UserDefaults key for the saved Dozzle URL (written by the setup window).
+    public static let urlKey = "url"
 
     public var baseURL: URL
     public var grace: TimeInterval
@@ -35,36 +39,53 @@ public struct DeskConfig: Sendable, Equatable {
         self.renderDelay = renderDelay
     }
 
-    public static func load(arguments: [String], defaults: UserDefaults = .standard) -> DeskConfig {
-        func flag(_ name: String) -> String? {
-            guard let i = arguments.firstIndex(of: "--\(name)"), i + 1 < arguments.count else { return nil }
-            return arguments[i + 1]
-        }
+    /// The URL text the user asked for: `--url`, else the saved one. Not validated.
+    public static func requestedURL(arguments: [String], defaults: UserDefaults = .standard) -> String? {
+        flag("url", in: arguments) ?? defaults.string(forKey: urlKey)
+    }
+
+    /// nil when no usable Dozzle URL is configured yet (first launch, or a bad `--url`).
+    public static func load(arguments: [String], defaults: UserDefaults = .standard) -> DeskConfig? {
+        guard let url = requestedURL(arguments: arguments, defaults: defaults).flatMap(normalize) else { return nil }
+        return load(arguments: arguments, defaults: defaults, baseURL: url)
+    }
+
+    /// All other settings, with an explicit server address.
+    public static func load(arguments: [String], defaults: UserDefaults = .standard, baseURL: URL) -> DeskConfig {
         func number(_ name: String) -> Double? {
-            if let s = flag(name), let d = Double(s) { return d }
+            if let s = flag(name, in: arguments), let d = Double(s) { return d }
             return defaults.object(forKey: name) == nil ? nil : defaults.double(forKey: name)
         }
-        let rawURL = flag("url") ?? defaults.string(forKey: "url") ?? defaultURL
-        let url = normalize(rawURL) ?? URL(string: defaultURL)!
         var config = DeskConfig(
-            baseURL: url,
+            baseURL: baseURL,
             grace: max(5, number("grace") ?? 120),
             stallTimeout: max(5, number("stall") ?? 25),
             opacity: min(1, max(0.3, number("opacity") ?? 1)),
-            renderPNG: flag("render-png"),
-            renderWhen: flag("render-when") ?? "live",
-            renderDelay: max(0, Double(flag("render-delay") ?? "") ?? 3))
+            renderPNG: flag("render-png", in: arguments),
+            renderWhen: flag("render-when", in: arguments) ?? "live",
+            renderDelay: max(0, Double(flag("render-delay", in: arguments) ?? "") ?? 3))
         if arguments.contains("--no-card") { config.showCard = false }
         if arguments.contains("--card") { config.showCard = true }
         return config
     }
 
-    static func normalize(_ raw: String) -> URL? {
+    public static func flag(_ name: String, in arguments: [String]) -> String? {
+        guard let i = arguments.firstIndex(of: "--\(name)"), i + 1 < arguments.count else { return nil }
+        return arguments[i + 1]
+    }
+
+    /// Accepts what people type: `dozzle.lan:8080`, `http://10.0.0.5:8080/`, `https://host/dozzle`.
+    /// Adds `http://` when no scheme is given and drops trailing slashes. nil if it isn't an http(s) URL.
+    public static func normalize(_ raw: String) -> URL? {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty, !s.contains(where: \.isWhitespace) else { return nil }
         if !s.contains("://") { s = "http://" + s }
         while s.hasSuffix("/") { s.removeLast() }
-        guard let u = URL(string: s), u.host != nil, ["http", "https"].contains(u.scheme ?? "") else { return nil }
-        return u
+        guard let u = URLComponents(string: s), let host = u.host, !host.isEmpty,
+              ["http", "https"].contains(u.scheme?.lowercased() ?? ""),
+              u.query == nil, u.fragment == nil, u.user == nil, u.password == nil,
+              let url = u.url else { return nil }
+        return url
     }
 
     private func endpoint(_ path: String) -> URL { URL(string: baseURL.absoluteString + path)! }
@@ -75,9 +96,11 @@ public struct DeskConfig: Sendable, Equatable {
     public func hostPage(_ id: String) -> URL { endpoint("/host/\(id)") }
     public func containerPage(_ id: String) -> URL { endpoint("/container/\(id)") }
 
-    /// "narciso-linux:9900"
+    /// "dozzle.lan:8080" (plus the base path, if any)
     public var displayHost: String {
         let host = baseURL.host ?? baseURL.absoluteString
-        return baseURL.port.map { "\(host):\($0)" } ?? host
+        let hostPort = baseURL.port.map { "\(host):\($0)" } ?? host
+        let path = baseURL.path
+        return path.isEmpty || path == "/" ? hostPort : hostPort + path
     }
 }

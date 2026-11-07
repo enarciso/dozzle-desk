@@ -9,8 +9,8 @@ private func ev(_ name: String, _ json: String) -> SSEEvent { SSEEvent(event: na
 private let indexHTML = """
 <html><head><script type="application/json" id="config__json">
 {"authProvider":"none","version":"v11.4.1","hosts":[
- {"name":"narciso-linux","id":"H1","nCPU":8,"memTotal":16000000000,"type":"local","available":true},
- {"name":"bastion","id":"H2","nCPU":2,"memTotal":2000000000,"type":"agent","available":false}]}
+ {"name":"homeserver","id":"H1","nCPU":8,"memTotal":16000000000,"type":"local","available":true},
+ {"name":"edge","id":"H2","nCPU":2,"memTotal":2000000000,"type":"agent","available":false}]}
 </script></head></html>
 """
 
@@ -35,7 +35,7 @@ private let containersJSON = """
     @Test func parsesIndexConfig() {
         let cfg = DzIndexConfig.parse(html: indexHTML)
         #expect(cfg?.version == "v11.4.1")
-        #expect(cfg?.hosts.map(\.name) == ["narciso-linux", "bastion"])
+        #expect(cfg?.hosts.map(\.name) == ["homeserver", "edge"])
         #expect(DzIndexConfig.parse(html: "<html></html>") == nil)
     }
 
@@ -69,10 +69,10 @@ private let containersJSON = """
         #expect(snap.counts.healthy == 1)
         #expect(snap.counts.unhealthy == 1)
         #expect(snap.counts.exited == 1)
-        // Critical first: bastion unreachable + db unhealthy. A one-off exited job is not a problem.
+        // Critical first: edge unreachable + db unhealthy. A one-off exited job is not a problem.
         #expect(snap.problems.map(\.id).sorted() == ["host-H2", "unhealthy-bbbbbbbbbbbb"])
         #expect(snap.problems.allSatisfy { $0.severity == .critical })
-        #expect(snap.hosts.map(\.name) == ["bastion", "narciso-linux"])
+        #expect(snap.hosts.map(\.name) == ["edge", "homeserver"])
         #expect(snap.topCPU.first?.name == "web")
         #expect(snap.topMemory.first?.name == "web")
     }
@@ -108,15 +108,15 @@ private let containersJSON = """
         #expect(s.hosts["H1"]?.load1 == 1.5)
         #expect(s.hosts["H1"]?.diskFree == 42)
 
-        s.apply(ev("update-host", #"{"id":"H2","name":"bastion","available":true}"#), now: t0)
+        s.apply(ev("update-host", #"{"id":"H2","name":"edge","available":true}"#), now: t0)
         #expect(s.hosts["H2"]?.available == true)
 
         // An agent restart gets a new ID; containers follow it.
-        s.apply(ev("update-host", #"{"id":"H3","name":"bastion","replacesId":"H2","available":true}"#), now: t0)
+        s.apply(ev("update-host", #"{"id":"H3","name":"edge","replacesId":"H2","available":true}"#), now: t0)
         #expect(s.hosts["H2"] == nil)
         #expect(s.containers["dddddddddddd"]?.hostId == "H3")
 
-        s.apply(ev("update-host", #"{"id":"H3","name":"bastion","removed":true}"#), now: t0)
+        s.apply(ev("update-host", #"{"id":"H3","name":"edge","removed":true}"#), now: t0)
         #expect(s.hosts["H3"] == nil)
     }
 

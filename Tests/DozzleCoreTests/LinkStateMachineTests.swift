@@ -98,20 +98,49 @@ private func at(_ s: TimeInterval) -> Date { t0.addingTimeInterval(s) }
         #expect(m2.preflightFailed(auth: true) == .authRequired)
     }
 
+    private func fresh() -> UserDefaults { UserDefaults(suiteName: "dozzledesk-tests-\(UUID())")! }
+
     @Test func configParsing() {
-        let c = DeskConfig.load(arguments: ["x", "--url", "narciso-linux:9900/", "--grace", "2"],
-                                defaults: UserDefaults(suiteName: "dozzledesk-tests-\(UUID())")!)
-        #expect(c.baseURL.absoluteString == "http://narciso-linux:9900")
-        #expect(c.grace == 5) // clamped minimum
-        #expect(c.streamURL.absoluteString == "http://narciso-linux:9900/api/events/stream")
-        #expect(c.displayHost == "narciso-linux:9900")
-        let d = DeskConfig.load(arguments: ["x"], defaults: UserDefaults(suiteName: "dozzledesk-tests-\(UUID())")!)
-        #expect(d.baseURL.absoluteString == DeskConfig.defaultURL)
-        #expect(d.grace == 120)
-        #expect(d.stallTimeout == 25)
-        #expect(d.showCard == nil) // no override: the saved preference decides
-        let fresh = { UserDefaults(suiteName: "dozzledesk-tests-\(UUID())")! }
-        #expect(DeskConfig.load(arguments: ["x", "--no-card"], defaults: fresh()).showCard == false)
-        #expect(DeskConfig.load(arguments: ["x", "--card"], defaults: fresh()).showCard == true)
+        let c = DeskConfig.load(arguments: ["x", "--url", "dozzle.lan:8080/", "--grace", "2"], defaults: fresh())
+        #expect(c?.baseURL.absoluteString == "http://dozzle.lan:8080")
+        #expect(c?.grace == 5) // clamped minimum
+        #expect(c?.streamURL.absoluteString == "http://dozzle.lan:8080/api/events/stream")
+        #expect(c?.displayHost == "dozzle.lan:8080")
+        #expect(DeskConfig.load(arguments: ["x", "--no-card", "--url", "h"], defaults: fresh())?.showCard == false)
+        #expect(DeskConfig.load(arguments: ["x", "--card", "--url", "h"], defaults: fresh())?.showCard == true)
+        #expect(DeskConfig.load(arguments: ["x", "--url", "h"], defaults: fresh())?.showCard == nil)
+    }
+
+    @Test func noBuiltInServer() {
+        // Nothing configured: the app must ask rather than guess an address.
+        #expect(DeskConfig.load(arguments: ["x"], defaults: fresh()) == nil)
+        #expect(DeskConfig.load(arguments: ["x", "--url", "not a url"], defaults: fresh()) == nil)
+    }
+
+    @Test func savedURLAndFlagPrecedence() {
+        let d = fresh()
+        d.set("https://nas.lan/dozzle/", forKey: DeskConfig.urlKey)
+        let saved = DeskConfig.load(arguments: ["x"], defaults: d)
+        #expect(saved?.baseURL.absoluteString == "https://nas.lan/dozzle")
+        #expect(saved?.healthURL.absoluteString == "https://nas.lan/dozzle/healthcheck")
+        #expect(saved?.containerPage("abc").absoluteString == "https://nas.lan/dozzle/container/abc")
+        #expect(saved?.displayHost == "nas.lan/dozzle")
+        #expect(saved?.grace == 120)
+        #expect(saved?.stallTimeout == 25)
+        // --url wins for this launch only.
+        #expect(DeskConfig.load(arguments: ["x", "--url", "10.0.0.9:9999"], defaults: d)?.displayHost == "10.0.0.9:9999")
+        #expect(DeskConfig.requestedURL(arguments: ["x"], defaults: d) == "https://nas.lan/dozzle/")
+    }
+
+    @Test func normalizeWhatPeopleType() {
+        #expect(DeskConfig.normalize("  192.168.1.20:8080  ")?.absoluteString == "http://192.168.1.20:8080")
+        #expect(DeskConfig.normalize("HTTPS://Dozzle.example.com//")?.absoluteString == "HTTPS://Dozzle.example.com")
+        #expect(DeskConfig.normalize("http://[::1]:8080")?.absoluteString == "http://[::1]:8080")
+        #expect(DeskConfig.normalize("") == nil)
+        #expect(DeskConfig.normalize("ftp://host") == nil)
+        #expect(DeskConfig.normalize("http://") == nil)
+        #expect(DeskConfig.normalize("http://host:8080/?x=1") == nil)
+        #expect(DeskConfig.normalize("http://user:pw@host") == nil)
+        #expect(DeskConfig.normalize("my server") == nil)
     }
 }

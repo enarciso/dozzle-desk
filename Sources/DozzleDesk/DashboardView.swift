@@ -50,7 +50,8 @@ struct DashboardView: View {
                 .allowsHitTesting(isLive)
             }
             if let banner = bannerText {
-                ConnectionBanner(text: banner.text, detail: banner.detail, tone: banner.tone)
+                ConnectionBanner(text: banner.text, detail: banner.detail, tone: banner.tone,
+                                 action: banner.offerChangeURL ? { model.actions?.changeURL() } : nil)
             }
             if style == .popover {
                 Rectangle().fill(Palette.hairline).frame(height: 1)
@@ -116,6 +117,8 @@ struct DashboardView: View {
                 .disabled(status.phase == .sleeping || status.phase == .preflight)
             Spacer(minLength: 0)
             Menu {
+                Button("Change Dozzle URL…") { model.actions?.changeURL() }
+                Divider()
                 Toggle("Show Desktop Card", isOn: Binding(
                     get: { model.showCard },
                     set: { model.actions?.setShowCard($0) }))
@@ -138,7 +141,7 @@ struct DashboardView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Desktop card options")
+            .help("Options")
             Button { model.actions?.quit() } label: { Image(systemName: "power") }
                 .help("Quit DozzleDesk")
         }
@@ -195,10 +198,17 @@ struct DashboardView: View {
         }
     }
 
-    private struct Banner { var text: String; var detail: String?; var tone: Color }
+    private struct Banner {
+        var text: String
+        var detail: String?
+        var tone: Color
+        var offerChangeURL = false
+    }
 
     private var bannerText: Banner? {
-        if let msg = model.finalMessage { return Banner(text: msg, detail: nil, tone: Palette.bad) }
+        if let msg = model.finalMessage {
+            return Banner(text: msg, detail: nil, tone: Palette.bad, offerChangeURL: model.offerChangeURL)
+        }
         switch status.phase {
         case .preflight:
             return Banner(text: "Connecting to \(status.endpoint)…", detail: nil, tone: Palette.accent)
@@ -509,6 +519,8 @@ private struct ConnectionBanner: View {
     let text: String
     let detail: String?
     let tone: Color
+    /// Shows a "Change URL…" button (wrong address, or the server needs login).
+    var action: (() -> Void)?
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "wifi.exclamationmark").font(.system(size: 12, weight: .semibold)).foregroundStyle(tone)
@@ -517,6 +529,18 @@ private struct ConnectionBanner: View {
                 if let detail { Text(detail).font(.system(size: 10)).foregroundStyle(.secondary) }
             }
             Spacer(minLength: 0)
+            if let action {
+                // Plain style: draws in the desktop card, the dropdown and offscreen renders alike.
+                Button(action: action) {
+                    Text("Change URL…")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10).fill(tone.opacity(0.16)))

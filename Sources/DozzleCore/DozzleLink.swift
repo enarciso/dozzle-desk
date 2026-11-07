@@ -33,7 +33,7 @@ enum LinkError: Error {
 public actor DozzleLink {
     private let config: DeskConfig
     private let session: URLSession
-    private let log = Logger(subsystem: "com.narciso.dozzledesk", category: "link")
+    private let log = Logger(subsystem: AppIdentity.id, category: "link")
     private let onStatus: @Sendable (LinkStatus) -> Void
     private let onExit: @Sendable (ExitReason) -> Void
 
@@ -53,7 +53,7 @@ public actor DozzleLink {
     private var finished = false
     private var stopped = false
     private let monitor = NWPathMonitor()
-    private let monitorQueue = DispatchQueue(label: "com.narciso.dozzledesk.path")
+    private let monitorQueue = DispatchQueue(label: AppIdentity.id + ".path")
 
     public init(config: DeskConfig,
                 onStatus: @escaping @Sendable (LinkStatus) -> Void,

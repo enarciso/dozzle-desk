@@ -19,7 +19,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
     private var lastHeader = ""
     private var lastTint: NSColor?
 
-    init(model: DeskModel, endpoint: String) {
+    init(model: DeskModel) {
         self.model = model
         super.init()
 
@@ -28,7 +28,6 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
             img?.isTemplate = true
             button.image = img
             button.imagePosition = .imageLeading
-            button.toolTip = "DozzleDesk — \(endpoint)\nClick for dashboard, right-click for menu"
             button.target = self
             button.action = #selector(clicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -40,6 +39,10 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         popover.delegate = self
 
         buildMenu()
+    }
+
+    func setEndpoint(_ endpoint: String) {
+        item.button?.toolTip = "DozzleDesk — \(endpoint)\nClick for dashboard, right-click for menu"
     }
 
     // MARK: Clicks
@@ -86,6 +89,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         menu.addItem(.separator())
         menu.addItem(makeItem("Open Dozzle", shortcut: "o") { $0.openDozzle() })
         menu.addItem(makeItem("Reconnect Now", shortcut: "r") { $0.reconnect() })
+        menu.addItem(makeItem("Change Dozzle URL…", shortcut: ",") { $0.changeURL() })
         menu.addItem(.separator())
         menu.autoenablesItems = false
         showCardItem.target = self
