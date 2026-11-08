@@ -22,14 +22,36 @@ app has to close (Dozzle unreachable), the card briefly reappears with the closi
 vanishes silently. `--no-card` / `--card` override the saved choice for a single launch.
 
 ## Requirements
-- macOS 14 or later.
-- Swift 6 from the Xcode Command Line Tools (`xcode-select --install`). Xcode itself isn't needed.
+- macOS 14 or later, on Apple silicon or Intel.
 - A Dozzle server **without authentication** (`DOZZLE_AUTH_PROVIDER=none`). DozzleDesk shows a clear
   message and exits if Dozzle asks for a login.
+- To build from source: Swift 6 from the Xcode Command Line Tools (`xcode-select --install`). Xcode
+  itself isn't needed.
 
-## Install
+## Download
+1. Download `DozzleDesk-<version>.zip` from the
+   [latest release](https://github.com/enarciso/dozzle-desk/releases/latest) and unzip it.
+2. Move `DozzleDesk.app` to `Applications`.
+3. Open it once past Gatekeeper (see below), then enter your Dozzle address.
+
+**The app is not notarized.** It's ad-hoc signed, not signed with an Apple Developer ID, so macOS blocks
+the first launch of a downloaded copy with "Apple could not verify DozzleDesk is free of malware".
+To open it anyway, either:
+- try to open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**, or
+- remove the download quarantine flag in Terminal:
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/DozzleDesk.app
+  ```
+
+Each release lists the zip's SHA-256. To check your download:
 ```bash
-git clone <this repo> && cd dozzle-desk
+shasum -a 256 -c DozzleDesk-<version>.zip.sha256
+```
+If you'd rather not trust a prebuilt binary, build it yourself as below. It's the same code.
+
+## Build from source
+```bash
+git clone https://github.com/enarciso/dozzle-desk.git && cd dozzle-desk
 scripts/install.sh                     # builds and copies DozzleDesk.app to ~/Applications
 open ~/Applications/DozzleDesk.app
 ```
@@ -117,6 +139,13 @@ python3 scripts/fixture_server.py --port 9911 [--stall-after N] [--auth]   # a f
 `scripts/test.sh` wraps `swift test` with the flags Swift Testing needs under the Command Line Tools.
 `--render-png out.png [--render-when live|lost] [--render-delay 3] [--render-popover]` renders one
 frame offscreen and exits.
+
+### Releasing
+```bash
+scripts/release.sh 0.1.0      # tests, universal build, dist/DozzleDesk-0.1.0.zip + .sha256
+git tag -a v0.1.0 -m "DozzleDesk 0.1.0" && git push origin v0.1.0
+gh release create v0.1.0 dist/DozzleDesk-0.1.0.zip dist/DozzleDesk-0.1.0.zip.sha256
+```
 
 ## Uninstall
 ```bash
