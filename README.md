@@ -1,3 +1,5 @@
+<p align="center"><img src="Assets/icon-1024.png" width="160" alt="DozzleDesk icon"></p>
+
 # DozzleDesk
 
 A transparent, always-on container dashboard pinned to the macOS desktop, with a menu bar dropdown.
@@ -111,6 +113,7 @@ scripts/test.sh                       # unit tests (parser, reducer, connection 
 python3 scripts/fixture_server.py --port 9911 [--stall-after N] [--auth]   # a fake Dozzle for outage tests
 .build/debug/DozzleDesk --url http://127.0.0.1:9911 --grace 20 --stall 6
 ```
+`scripts/make-icon.sh` redraws the app icon (`Assets/AppIcon.icns`) from `scripts/make-icon.swift`.
 `scripts/test.sh` wraps `swift test` with the flags Swift Testing needs under the Command Line Tools.
 `--render-png out.png [--render-when live|lost] [--render-delay 3] [--render-popover]` renders one
 frame offscreen and exits.
