@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ExitReason: String, Sendable, Equatable {
-    case unreachableAtLaunch, graceExpired, authRequired, userQuit
+    case unreachableAtLaunch, graceExpired, authRequired, certificateRejected, userQuit
 }
 
 public struct LinkPolicy: Sendable, Equatable {

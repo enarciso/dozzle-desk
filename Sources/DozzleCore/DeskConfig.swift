@@ -26,6 +26,10 @@ public struct DeskConfig: Sendable, Equatable {
     public var renderPNG: String?
     public var renderWhen: String
     public var renderDelay: TimeInterval
+    /// Login, proxy credentials and headers for this server (from the Keychain; never in defaults).
+    public var auth: ServerAuth = .none
+    /// SHA-256 of a certificate the user chose to trust for this server (see CertificatePins).
+    public var trustedCertificate: String?
 
     public init(baseURL: URL, grace: TimeInterval = 120, stallTimeout: TimeInterval = 25,
                 opacity: Double = 1, renderPNG: String? = nil, renderWhen: String = "live",
@@ -74,6 +78,19 @@ public struct DeskConfig: Sendable, Equatable {
         return arguments[i + 1]
     }
 
+    /// Like `normalize`, but `http://user:pass@host` is accepted and the credentials are handed
+    /// back separately (for proxy basic auth) instead of being kept in the URL.
+    public static func splitCredentials(_ raw: String) -> (url: URL, username: String, password: String)? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withScheme = trimmed.contains("://") ? trimmed : "http://" + trimmed
+        guard var parts = URLComponents(string: withScheme) else { return nil }
+        let user = parts.user ?? "", password = parts.password ?? ""
+        parts.user = nil
+        parts.password = nil
+        guard let stripped = parts.string, let url = normalize(stripped) else { return nil }
+        return (url, user, password)
+    }
+
     /// Accepts what people type: `dozzle.lan:8080`, `http://10.0.0.5:8080/`, `https://host/dozzle`.
     /// Adds `http://` when no scheme is given and drops trailing slashes. nil if it isn't an http(s) URL.
     public static func normalize(_ raw: String) -> URL? {
@@ -93,6 +110,7 @@ public struct DeskConfig: Sendable, Equatable {
     public var healthURL: URL { endpoint("/healthcheck") }
     public var indexURL: URL { endpoint("/") }
     public var streamURL: URL { endpoint("/api/events/stream") }
+    public var tokenURL: URL { endpoint("/api/token") }
     public func hostPage(_ id: String) -> URL { endpoint("/host/\(id)") }
     public func containerPage(_ id: String) -> URL { endpoint("/container/\(id)") }
 

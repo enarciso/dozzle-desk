@@ -9,6 +9,7 @@ private let showNotification = Notification.Name(AppIdentity.id + ".show")
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let arguments = CommandLine.arguments
+    private let credentials: CredentialStore = KeychainCredentialStore()
     /// nil until a Dozzle URL is known (first launch waits on the setup window).
     private var config: DeskConfig?
     private var model: DeskModel?
@@ -34,8 +35,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let raw = DeskConfig.flag("check", in: arguments) {
             oneShot = true
             Task {
-                let result = await DozzleProbe.check(raw)
+                let saved = DeskConfig.normalize(raw).map { self.withSecrets(DeskConfig(baseURL: $0)) }
+                let result = await DozzleProbe.check(raw, auth: saved?.auth ?? .none,
+                                                     trustedCertificate: saved?.trustedCertificate)
                 print("\(result.url?.absoluteString ?? raw): \(result.outcome.message)")
+                if case .untrustedCertificate(let cert) = result.outcome {
+                    print("  \(cert.subject): \(cert.reason)")
+                    print("  SHA-256 \(cert.fingerprint)")
+                    print("  If that's your server's certificate, trust it for this check with DOZZLEDESK_CERT_SHA256=<fingerprint>,")
+                    print("  or connect from the app and choose Trust This Certificate.")
+                }
                 exit(result.outcome.isOK ? 0 : 1)
             }
             return
@@ -43,7 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if arguments.contains("--render-png") {
             oneShot = true
-            guard let config = DeskConfig.load(arguments: arguments), let png = config.renderPNG else {
+            guard let config = DeskConfig.load(arguments: arguments).map(withSecrets), let png = config.renderPNG else {
                 FileHandle.standardError.write(Data("--render-png needs --url (or a saved URL)\n".utf8))
                 exit(1)
             }
@@ -61,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installMainMenu()
         observeSystem()
 
-        if let config = DeskConfig.load(arguments: arguments) {
+        if let config = DeskConfig.load(arguments: arguments).map(withSecrets) {
             begin(with: config)
         } else {
             if let bad = DeskConfig.flag("url", in: arguments) {
@@ -179,23 +188,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pendingExit = nil
         menuBar?.closePopover()
         let initial = config?.baseURL.absoluteString ?? DeskConfig.requestedURL(arguments: arguments) ?? ""
+        let saved = config ?? DeskConfig.normalize(initial).map { withSecrets(DeskConfig(baseURL: $0)) }
         let controller = SetupWindowController(
             initialURL: initial,
+            auth: saved?.auth ?? .none,
+            trustedCertificate: saved?.trustedCertificate,
             firstRun: config == nil,
-            onConnect: { [weak self] url in
+            onConnect: { [weak self] choice in
                 self?.setup = nil
-                self?.connect(to: url)
+                self?.connect(to: choice)
             },
             onCancel: { [weak self] in self?.setupCancelled() })
         setup = controller
         controller.show()
     }
 
-    /// Saves the (already verified) URL and connects to it, replacing any current link.
-    private func connect(to url: URL) {
+    /// Adds what's stored outside UserDefaults for this server: credentials from the Keychain
+    /// and any certificate the user chose to trust.
+    /// `DOZZLEDESK_*` environment variables, when set, replace both for this run (scripting, `--check`).
+    private func withSecrets(_ config: DeskConfig) -> DeskConfig {
+        var c = config
+        let env = ProcessInfo.processInfo.environment
+        switch ServerAuth.fromEnvironment(env) {
+        case .success(let auth)?:
+            c.auth = auth
+        case .failure(let problem)?:
+            log.error("ignoring DOZZLEDESK_HEADERS: \(problem.message, privacy: .public)")
+            c.auth = credentials.load(for: c.baseURL)
+        case nil:
+            c.auth = credentials.load(for: c.baseURL)
+        }
+        c.trustedCertificate = ServerAuth.certificateFromEnvironment(env) ?? CertificatePins.pin(for: c.baseURL)
+        return c
+    }
+
+    /// Saves the (already verified) server and connects to it, replacing any current link.
+    private func connect(to choice: ServerChoice) {
         guard !shuttingDown else { return }
+        let url = choice.url
         UserDefaults.standard.set(url.absoluteString, forKey: DeskConfig.urlKey)
-        let newConfig = DeskConfig.load(arguments: arguments, baseURL: url)
+        do {
+            try credentials.save(choice.auth, for: url)
+        } catch {
+            // Still connect for this session; it will ask again next launch.
+            log.error("couldn't save credentials to the Keychain: \(String(describing: error), privacy: .public)")
+        }
+        CertificatePins.setPin(choice.trustedCertificate, for: url)
+        var newConfig = DeskConfig.load(arguments: arguments, baseURL: url)
+        newConfig.auth = choice.auth
+        newConfig.trustedCertificate = choice.trustedCertificate
         log.notice("Dozzle URL set to \(url.absoluteString, privacy: .public)")
         guard let model else {
             begin(with: newConfig)
@@ -262,7 +303,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model?.offerChangeURL = true
             delay = 8
         case .authRequired:
-            model?.finalMessage = "\(host) requires login — closing"
+            model?.finalMessage = config?.auth.isEmpty == false
+                ? "\(host) didn't accept the saved login — closing"
+                : "\(host) requires login — closing"
+            model?.offerChangeURL = true
+            delay = 8
+        case .certificateRejected:
+            model?.finalMessage = "\(host)'s HTTPS certificate changed — closing"
             model?.offerChangeURL = true
             delay = 8
         case .userQuit:

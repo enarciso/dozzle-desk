@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Removes everything DozzleDesk put on this Mac: the app, its preferences, its support folder.
+# Removes everything DozzleDesk put on this Mac: the app, its preferences, its support folder,
+# and any saved Dozzle or proxy logins in the Keychain.
 #   BUNDLE_ID=com.you.dozzledesk scripts/uninstall.sh   # if you built with your own bundle identifier
 set -uo pipefail
 BUNDLE_ID="${BUNDLE_ID:-io.github.dozzledesk.DozzleDesk}"
@@ -11,4 +12,7 @@ rm -rf "$HOME/Applications/DozzleDesk.app"
 defaults delete "$BUNDLE_ID" 2>/dev/null || true             # bundled app
 defaults delete DozzleDesk 2>/dev/null || true               # unbundled runs
 rm -rf "$HOME/Library/Application Support/DozzleDesk"
+for service in "$BUNDLE_ID.server" "DozzleDesk.server"; do   # one Keychain item per saved server
+  while security delete-generic-password -s "$service" >/dev/null 2>&1; do :; done
+done
 echo "DozzleDesk removed."

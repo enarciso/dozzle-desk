@@ -162,18 +162,38 @@ public struct DzVersion: Decodable, Sendable, Equatable {
 }
 
 /// The app config Dozzle embeds in its index page as `<script id="config__json">`.
+/// Signed out, Dozzle redirects to its login page, whose config has no hosts but says how to sign in.
 public struct DzIndexConfig: Decodable, Sendable, Equatable {
     public var version: String?
     public var authProvider: String?
+    /// "server" (default), "swarm" or "k8s".
+    public var mode: String?
     public var hosts: [DzHost]
+    /// Login page only: whether Dozzle's username/password form can work.
+    public var passwordLogin: Bool?
+    /// Login page only: names of the external sign-in providers (GitHub, OIDC…).
+    public var oauthProviders: [String]
 
-    enum CodingKeys: String, CodingKey { case version, authProvider, hosts }
+    private struct Provider: Decodable { var name: String? }
+    enum CodingKeys: String, CodingKey { case version, authProvider, mode, hosts, passwordLogin, oauthProviders }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         version = c.lenient(String.self, .version)
         authProvider = c.lenient(String.self, .authProvider)
+        mode = c.lenient(String.self, .mode)
         hosts = c.lenient([DzHost].self, .hosts) ?? []
+        passwordLogin = c.lenient(Bool.self, .passwordLogin)
+        oauthProviders = (c.lenient([Provider].self, .oauthProviders) ?? []).compactMap(\.name)
+    }
+
+    /// "Swarm" / "Kubernetes" for display; nil for the ordinary server mode.
+    public var modeLabel: String? {
+        switch mode?.lowercased() {
+        case "swarm": return "Swarm"
+        case "k8s": return "Kubernetes"
+        default: return nil
+        }
     }
 
     public static func parse(html: String) -> DzIndexConfig? {
