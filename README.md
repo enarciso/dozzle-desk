@@ -30,8 +30,8 @@ vanishes silently. `--no-card` / `--card` override the saved choice for a single
 
 ## Requirements
 - macOS 14 or later, on Apple silicon or Intel.
-- A Dozzle server **without authentication** (`DOZZLE_AUTH_PROVIDER=none`). DozzleDesk shows a clear
-  message and exits if Dozzle asks for a login.
+- A Dozzle server in server, Swarm or Kubernetes mode. It can run without login, with Dozzle's own
+  login, or behind a proxy (see [Login, proxies and HTTPS](#login-proxies-and-https)).
 - To build from source: Swift 6 from the Xcode Command Line Tools (`xcode-select --install`). Xcode
   itself isn't needed.
 
@@ -79,8 +79,10 @@ such as `http://192.168.1.20:8080`, `dozzle.lan:8080` or `https://nas.lan/dozzle
 
 It checks the address before saving it, and reports exactly what's wrong:
 - the host can't be found, or it refused the connection,
-- something answered that isn't Dozzle (wrong port, base path, or a login proxy in front of it),
-- Dozzle requires login.
+- something answered that isn't Dozzle (wrong port or base path),
+- Dozzle wants its login, or rejected the username and password,
+- a proxy in front of Dozzle wants credentials or headers,
+- the HTTPS certificate isn't trusted.
 
 To change servers later, choose **Change Dozzle URL…** from the right-click menu or the dropdown's
 options button. If the saved server is unreachable at launch, the closing message has a
@@ -90,6 +92,36 @@ Test an address from the terminal:
 ```bash
 .build/release/DozzleDesk --check http://192.168.1.20:8080
 ```
+`--check` uses the login saved for that address. To try other credentials, set them for that one
+command with the `DOZZLEDESK_*` variables below.
+
+### Login, proxies and HTTPS
+Open **Dozzle login** or **Proxy & headers** in the setup window. Each section opens on its own when
+the check finds it's needed. Credentials are saved in your login Keychain, one item per Dozzle
+address, never in preferences or logs.
+
+| Your setup | What to enter |
+|---|---|
+| Dozzle's own login (`DOZZLE_AUTH_PROVIDER=simple`) | **Dozzle login**: your Dozzle username and password. DozzleDesk signs in like the login page does, keeps the session in memory, and signs in again when it expires. A rejected password stops it; it never retries in a loop |
+| Basic auth at a proxy (Caddy `basic_auth`, nginx `auth_basic`, Traefik `basicAuth`) | **Proxy & headers**: the proxy username and password. Typing `http://user:pass@host` moves them there too |
+| A token or service headers (bearer token, Cloudflare Access `CF-Access-Client-Id` / `CF-Access-Client-Secret`) | **Proxy & headers**: one `Name: value` per line |
+| Dozzle in `forward-proxy` mode | The headers your proxy would add, such as `Remote-User: you`, but only when DozzleDesk connects to Dozzle directly on a trusted network. Normally, connect through the proxy and give it what it needs |
+| Self-signed or private-CA HTTPS | Connect, check the SHA-256 fingerprint against your certificate, and choose **Trust This Certificate**. Only that certificate is trusted, and only for that server. If it changes, DozzleDesk stops and asks again |
+
+**Not supported:** Dozzle's GitHub or OIDC sign-in, and proxies that only sign in through a browser
+page (Authelia or Authentik without a header or basic-auth rule). These need a browser. DozzleDesk
+says so instead of failing silently.
+
+DozzleDesk sends these credentials only to the Dozzle address you entered. It follows no redirects
+to other hosts, so they never reach anywhere else.
+
+Because the app isn't notarized, macOS may ask once after an update before letting the new version
+read its Keychain item. Choose **Always Allow**.
+
+For scripting and `--check`, these environment variables replace the saved login for that run:
+`DOZZLEDESK_USERNAME`, `DOZZLEDESK_PASSWORD`, `DOZZLEDESK_PROXY_USERNAME`,
+`DOZZLEDESK_PROXY_PASSWORD`, `DOZZLEDESK_HEADERS` (one `Name: value` per line) and
+`DOZZLEDESK_CERT_SHA256`.
 
 ## What it shows
 - **Host tiles:**
@@ -118,7 +150,9 @@ Click a host or container to open it in Dozzle. Drag the card to move it.
 | Still down after the grace period (2 min) | "Closing" for 3 s, then a clean exit (code 0). It does **not** relaunch itself |
 | Dozzle comes back within the grace period | Goes live again and the grace timer resets |
 | Mac sleeps | Disconnects deliberately; on wake it reconnects with a fresh grace window |
-| Dozzle requires login (401/403) | Says so and exits; it never loops |
+| Dozzle session expires | Signs in again with the saved login and carries on |
+| Login rejected, or Dozzle requires a login you didn't give | Says so with a **Change URL…** button, then exits; it never loops |
+| HTTPS certificate changes from the one you trusted | Says so with a **Change URL…** button, then exits, so you can check the new one |
 
 Quit, Ctrl-C, `kill` and logout all take the same teardown path: cancel tasks, close sockets, stop the
 network monitor, remove observers, close the windows and status item, release the lock, exit 0.
@@ -143,10 +177,12 @@ To build with your own identifier, run `BUNDLE_ID=com.you.dozzledesk scripts/bui
 ## Development
 ```bash
 scripts/test.sh                       # unit tests (parser, reducer, connection policy, URL handling)
-python3 scripts/fixture_server.py --port 9911 [--stall-after N] [--auth] [--demo]   # a fake Dozzle
+python3 scripts/fixture_server.py --port 9911 [--stall-after N] [--demo]   # a fake Dozzle (--help for more)
 .build/debug/DozzleDesk --url http://127.0.0.1:9911 --grace 20 --stall 6
 ```
-`--demo` serves a fuller, made-up homelab. `scripts/screenshots.sh` uses it to regenerate the README
+The fixture can also act as Dozzle with its own login, as a proxy that wants basic auth or a header,
+as forward-proxy mode, as a sign-in portal, over self-signed HTTPS, and with Swarm or Kubernetes
+data. See the top of `scripts/fixture_server.py`. `--demo` serves a fuller, made-up homelab. `scripts/screenshots.sh` uses it to regenerate the README
 screenshots in `docs/`, so no real server or container names appear in them.
 `scripts/make-icon.sh` redraws the app icon (`Assets/AppIcon.icns`) from `scripts/make-icon.swift`.
 `scripts/test.sh` wraps `swift test` with the flags Swift Testing needs under the Command Line Tools.
@@ -165,11 +201,15 @@ the same zip locally, run `scripts/release.sh 0.2.0` (output goes to `dist/`).
 
 ## Uninstall
 ```bash
-scripts/uninstall.sh                  # removes the app, its preferences and its support folder
+scripts/uninstall.sh                  # removes the app, its preferences, support folder and saved logins
 ```
 
 ## Safety notes
-- **Read-only:** only GET requests to the Dozzle you configure. No actions, no shell, no telemetry.
+- **Read-only:** GET requests to the Dozzle you configure, plus one `POST /api/token` to sign in
+  when you use Dozzle's login. No actions, no shell, no telemetry.
+- **Credentials stay in the Keychain** and go only to the address you entered: no redirects to
+  other hosts are followed. Certificates you trust are pinned by SHA-256, one per server. Certificate
+  checks are never turned off.
 - **Plain http is allowed.** Many homelab Dozzles have no TLS, so App Transport Security is relaxed.
   The only server the app ever contacts is the one you enter. Prefer `https://` when you have it.
 - **Bounded resources:** about 1–2% CPU and a flat ~97 MB RSS against a 47-container, 4-host setup.

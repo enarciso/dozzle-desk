@@ -60,7 +60,13 @@ public struct HomelabState: Sendable {
     }
 
     /// Dozzle uses 12-char short IDs in stats; Docker events may carry the full 64-char ID.
-    static func key(_ id: String) -> String { String(id.prefix(12)) }
+    /// Docker IDs show up both full (64 hex) and short (12), so they're keyed by the short form.
+    /// Other IDs are kept whole: Kubernetes mode uses "namespace:pod:container", where the first
+    /// 12 characters would merge every pod in a namespace like "kube-system".
+    static func key(_ id: String) -> String {
+        let isDockerID = id.count >= 12 && id.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+        return isDockerID ? String(id.prefix(12)) : id
+    }
 
     private static let decoder = JSONDecoder()
     private func decode<T: Decodable>(_ type: T.Type, _ data: String) -> T? {

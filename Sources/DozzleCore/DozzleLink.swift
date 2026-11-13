@@ -20,6 +20,7 @@ public struct LinkStatus: Sendable, Equatable {
 
 enum LinkError: Error {
     case auth
+    case certificate
     case http(Int)
     case unreachable(String)
     case stalled
@@ -29,10 +30,10 @@ enum LinkError: Error {
 /// Owns the single connection to Dozzle: preflight, inventory fetch, SSE stream, watchdog,
 /// reconnect/backoff, grace expiry, sleep/wake and network-path handling.
 ///
-/// Read-only: it only ever issues GET requests.
+/// Read-only: GET requests, plus `POST /api/token` to sign in when Dozzle's own login is used.
 public actor DozzleLink {
     private let config: DeskConfig
-    private let session: URLSession
+    private let client: DozzleClient
     private let log = Logger(subsystem: AppIdentity.id, category: "link")
     private let onStatus: @Sendable (LinkStatus) -> Void
     private let onExit: @Sendable (ExitReason) -> Void
@@ -67,13 +68,8 @@ public actor DozzleLink {
         cfg.timeoutIntervalForRequest = 15          // idle timeout between packets
         cfg.timeoutIntervalForResource = 60 * 60 * 24 * 30
         cfg.waitsForConnectivity = false            // fail fast; we own the retry policy
-        cfg.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        cfg.urlCache = nil
-        cfg.httpCookieStorage = nil
-        cfg.httpShouldSetCookies = false
         cfg.httpMaximumConnectionsPerHost = 2
-        cfg.httpAdditionalHeaders = ["User-Agent": "DozzleDesk/0.1"]
-        self.session = URLSession(configuration: cfg)
+        self.client = DozzleClient(config: config, configuration: cfg)
     }
 
     // MARK: Lifecycle
@@ -98,7 +94,7 @@ public actor DozzleLink {
         loopTask?.cancel()
         tickTask?.cancel()
         monitor.cancel()
-        session.invalidateAndCancel()
+        client.invalidate()
         _ = await loopTask?.value
         _ = await tickTask?.value
         log.info("link stopped")
@@ -160,6 +156,7 @@ public actor DozzleLink {
         case .auth: finish(machine.preflightFailed(auth: true)); return
         case .failed(let why):
             log.error("preflight failed: \(why, privacy: .public)")
+            if client.rejectedCertificate != nil { finish(.certificateRejected); return }
             finish(machine.preflightFailed(auth: false))
             return
         }
@@ -201,6 +198,11 @@ public actor DozzleLink {
             if case .failure(let error) = result {
                 isAuth = (error as? LinkError).map { if case .auth = $0 { return true } else { return false } } ?? false
                 log.warning("connection ended: \(String(describing: error), privacy: .public)")
+                // A certificate that stopped matching won't fix itself by retrying.
+                if case .certificate? = error as? LinkError {
+                    finish(.certificateRejected)
+                    return
+                }
             }
             switch machine.attemptFailed(now: Date(), auth: isAuth, random: Double.random(in: machine.policy.jitter)) {
             case .exit(let reason):
@@ -233,15 +235,12 @@ public actor DozzleLink {
     private enum ProbeResult { case ok, auth, failed(String) }
 
     private func probe(timeout: TimeInterval) async -> ProbeResult {
-        var req = URLRequest(url: config.healthURL)
-        req.timeoutInterval = timeout
         do {
-            let (_, resp) = try await session.data(for: req)
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            switch code {
+            let (_, resp) = try await client.data(config.healthURL, timeout: timeout)
+            switch resp.statusCode {
             case 200: return .ok
             case 401, 403: return .auth
-            default: return .failed("healthcheck HTTP \(code)")
+            default: return .failed("healthcheck HTTP \(resp.statusCode)")
             }
         } catch {
             return .failed(error.localizedDescription)
@@ -259,32 +258,23 @@ public actor DozzleLink {
         try Task.checkCancellation()
 
         // Host inventory lives in the index page's embedded config.
-        var indexReq = URLRequest(url: config.indexURL)
-        indexReq.timeoutInterval = 10
-        let (html, indexResp) = try await session.data(for: indexReq)
-        let indexCode = (indexResp as? HTTPURLResponse)?.statusCode ?? 0
-        if indexCode == 401 || indexCode == 403 { throw LinkError.auth }
-        guard indexCode == 200 else { throw LinkError.http(indexCode) }
+        let (html, indexResp) = try await authorized { try await self.client.data(self.config.indexURL, timeout: 10) }
+        guard indexResp.statusCode == 200 else { throw LinkError.http(indexResp.statusCode) }
         if let cfg = DzIndexConfig.parse(html: String(decoding: html, as: UTF8.self)) {
             state.setInventory(cfg)
             dirty = true
         }
         try Task.checkCancellation()
 
-        var req = URLRequest(url: config.streamURL)
-        req.timeoutInterval = 15
-        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-        let (bytes, resp) = try await session.bytes(for: req)
-        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        if code == 401 || code == 403 {
-            bytes.task.cancel()
-            throw LinkError.auth
+        let (bytes, resp) = try await authorized {
+            var req = self.client.request(self.config.streamURL, timeout: 15)
+            req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            let (bytes, resp) = try await self.client.bytes(req)
+            if resp.statusCode != 200 { bytes.task.cancel() }
+            return (bytes, resp)
         }
-        guard code == 200 else {
-            bytes.task.cancel()
-            throw LinkError.http(code)
-        }
+        guard resp.statusCode == 200 else { throw LinkError.http(resp.statusCode) }
         machine.activity(now: Date())
         let dataTask = bytes.task
 
@@ -296,6 +286,38 @@ public actor DozzleLink {
         }
         dataTask.cancel()
         throw LinkError.ended
+    }
+
+    /// Runs a request with Dozzle's login: signs in first if there's no session yet, and once
+    /// more if the session was refused (expired or Dozzle restarted). A refusal after a fresh
+    /// sign-in, or a rejected password, is final: no retry loop against a login.
+    private func authorized<T>(_ send: @Sendable () async throws -> (T, HTTPURLResponse)) async throws -> (T, HTTPURLResponse) {
+        func refused(_ r: HTTPURLResponse) -> Bool {
+            r.statusCode == 401 || r.statusCode == 403 || DozzleProbe.isLoginPage(r)
+        }
+        do {
+            if config.auth.usesDozzleLogin && !client.hasSession { try await signIn() }
+            var result = try await send()
+            if refused(result.1) && config.auth.usesDozzleLogin {
+                log.info("session refused; signing in again")
+                client.clearSession()
+                try await signIn()
+                result = try await send()
+            }
+            if refused(result.1) { throw LinkError.auth }
+            return result
+        } catch let error as URLError where client.rejectedCertificate != nil {
+            log.error("certificate rejected: \(error.localizedDescription, privacy: .public)")
+            throw LinkError.certificate
+        }
+    }
+
+    private func signIn() async throws {
+        switch try await client.login() {
+        case .ok: log.info("signed in to Dozzle")
+        case .rejected: throw LinkError.auth
+        case .unavailable(let code): log.info("no password login here (HTTP \(code)); continuing without")
+        }
     }
 
     private func consume(_ bytes: URLSession.AsyncBytes) async throws {
