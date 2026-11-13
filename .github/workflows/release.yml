@@ -1,0 +1,98 @@
+# Builds the downloadable app on GitHub's machines instead of a maintainer's laptop.
+#
+# Push a tag (git tag -a v0.2.0 -m "DozzleDesk 0.2.0" && git push origin v0.2.0) and this:
+#   1. runs the tests and builds the universal DozzleDesk.app (scripts/release.sh),
+#   2. records a signed build-provenance attestation for the zip, so anyone can check it
+#      was built here from that exact commit (gh attestation verify),
+#   3. creates a DRAFT release with the zip and its checksum. Review the notes, then publish.
+#
+# Run it by hand (Actions → Release → Run workflow) to do a build-only trial: the zip is kept
+# as a workflow artifact for a week and nothing is published or attested.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 0.2.0 (build-only, nothing is published)"
+        required: true
+        default: "0.0.0-dev"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    permissions:
+      contents: write        # create the draft release
+      id-token: write        # sign the provenance attestation
+      attestations: write    # store it
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcode-select -p
+          swift --version
+
+      - name: Work out the version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$INPUT_VERSION"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' is not a version like 1.2.3"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$GITHUB_RUN_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Test and build
+        run: scripts/release.sh "$VERSION"
+
+      - name: Keep the build (trial runs)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DozzleDesk-${{ env.VERSION }}
+          path: |
+            dist/DozzleDesk-${{ env.VERSION }}.zip
+            dist/DozzleDesk-${{ env.VERSION }}.zip.sha256
+          retention-days: 7
+
+      - name: Attest build provenance
+        if: github.ref_type == 'tag'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/DozzleDesk-${{ env.VERSION }}.zip
+
+      - name: Create draft release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::error::Release $GITHUB_REF_NAME already exists. Delete it or tag a new version; this workflow never replaces published files."
+            exit 1
+          fi
+          sha=$(cut -d' ' -f1 "dist/DozzleDesk-$VERSION.zip.sha256")
+          sed -e "s/{{VERSION}}/$VERSION/g" -e "s/{{SHA256}}/$sha/g" -e "s|{{REPO}}|$GITHUB_REPOSITORY|g" \
+            .github/release-notes.md > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/DozzleDesk-$VERSION.zip" "dist/DozzleDesk-$VERSION.zip.sha256" \
+            --draft --verify-tag --title "DozzleDesk $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" --generate-notes
+          echo "Draft release created: review the notes on GitHub, then publish it." >> "$GITHUB_STEP_SUMMARY"

@@ -7,6 +7,13 @@ It's fed live by [Dozzle](https://github.com/amir20/dozzle)'s event stream (`/ap
 
 DozzleDesk is an independent project. It isn't affiliated with or endorsed by Dozzle.
 
+<p align="center">
+  <img src="docs/card.png" width="440" alt="The DozzleDesk desktop card: three hosts with CPU sparklines, memory, disk and load; 17 running containers; a Needs attention list with an unhealthy and a restarting container; and the top containers by CPU and memory">
+  &nbsp;
+  <img src="docs/dropdown.png" width="380" alt="The menu bar dropdown: the same hosts, counts and Needs attention list, with Open Dozzle, Reconnect, options and Quit buttons">
+</p>
+<p align="center"><sub>The desktop card and the menu bar dropdown, showing a made-up demo homelab.</sub></p>
+
 The desktop card sits just above the desktop icons and below every normal window, and appears on all
 Spaces. It never takes focus and has no Dock icon.
 
@@ -43,10 +50,14 @@ To open it anyway, either:
   xattr -dr com.apple.quarantine /Applications/DozzleDesk.app
   ```
 
-Each release lists the zip's SHA-256. To check your download:
+Releases are built by GitHub Actions from the tagged commit, not on anyone's laptop. GitHub signs a
+provenance record for each zip. To check your download:
 ```bash
 shasum -a 256 -c DozzleDesk-<version>.zip.sha256
+gh attestation verify DozzleDesk-<version>.zip --repo enarciso/dozzle-desk
 ```
+The second command needs the [GitHub CLI](https://cli.github.com). It confirms the zip came from
+this repository's release workflow. Version 0.1.0 predates the workflow, so it has no provenance record.
 If you'd rather not trust a prebuilt binary, build it yourself as below. It's the same code.
 
 ## Build from source
@@ -132,20 +143,25 @@ To build with your own identifier, run `BUNDLE_ID=com.you.dozzledesk scripts/bui
 ## Development
 ```bash
 scripts/test.sh                       # unit tests (parser, reducer, connection policy, URL handling)
-python3 scripts/fixture_server.py --port 9911 [--stall-after N] [--auth]   # a fake Dozzle for outage tests
+python3 scripts/fixture_server.py --port 9911 [--stall-after N] [--auth] [--demo]   # a fake Dozzle
 .build/debug/DozzleDesk --url http://127.0.0.1:9911 --grace 20 --stall 6
 ```
+`--demo` serves a fuller, made-up homelab. `scripts/screenshots.sh` uses it to regenerate the README
+screenshots in `docs/`, so no real server or container names appear in them.
 `scripts/make-icon.sh` redraws the app icon (`Assets/AppIcon.icns`) from `scripts/make-icon.swift`.
 `scripts/test.sh` wraps `swift test` with the flags Swift Testing needs under the Command Line Tools.
 `--render-png out.png [--render-when live|lost] [--render-delay 3] [--render-popover]` renders one
 frame offscreen and exits.
 
 ### Releasing
+Push a version tag. The [Release workflow](.github/workflows/release.yml) then runs the tests,
+builds the universal app, attests its provenance, and creates a **draft** release with the zip and
+checksum. Write what changed at the top of the draft, then publish it.
 ```bash
-scripts/release.sh 0.1.0      # tests, universal build, dist/DozzleDesk-0.1.0.zip + .sha256
-git tag -a v0.1.0 -m "DozzleDesk 0.1.0" && git push origin v0.1.0
-gh release create v0.1.0 dist/DozzleDesk-0.1.0.zip dist/DozzleDesk-0.1.0.zip.sha256
+git tag -a v0.2.0 -m "DozzleDesk 0.2.0" && git push origin v0.2.0
 ```
+To try a build without publishing anything, run the workflow by hand from the Actions tab. To build
+the same zip locally, run `scripts/release.sh 0.2.0` (output goes to `dist/`).
 
 ## Uninstall
 ```bash

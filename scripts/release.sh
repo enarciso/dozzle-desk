@@ -2,7 +2,7 @@
 # Builds the downloadable release: a universal (Apple silicon + Intel), ad-hoc signed
 # DozzleDesk.app zipped into dist/, plus a SHA-256 checksum file.
 #   scripts/release.sh 0.1.0
-# Publishing is a separate, manual step (see README "Releasing").
+# The Release workflow (.github/workflows/release.yml) runs this on GitHub for every version tag.
 set -euo pipefail
 VERSION="${1:?usage: scripts/release.sh VERSION   e.g. 0.1.0}"
 cd "$(dirname "$0")/.."
