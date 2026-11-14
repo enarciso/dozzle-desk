@@ -183,7 +183,8 @@ python3 scripts/fixture_server.py --port 9911 [--stall-after N] [--demo]   # a f
 The fixture can also act as Dozzle with its own login, as a proxy that wants basic auth or a header,
 as forward-proxy mode, as a sign-in portal, over self-signed HTTPS, and with Swarm or Kubernetes
 data. See the top of `scripts/fixture_server.py`. `--demo` serves a fuller, made-up homelab. `scripts/screenshots.sh` uses it to regenerate the README
-screenshots in `docs/`, so no real server or container names appear in them.
+screenshots in `docs/` and the GitHub social preview (`docs/social-preview.png`, uploaded by hand
+under Settings → General → Social preview), so no real server or container names appear in them.
 `scripts/make-icon.sh` redraws the app icon (`Assets/AppIcon.icns`) from `scripts/make-icon.swift`.
 `scripts/test.sh` wraps `swift test` with the flags Swift Testing needs under the Command Line Tools.
 `--render-png out.png [--render-when live|lost] [--render-delay 3] [--render-popover]` renders one

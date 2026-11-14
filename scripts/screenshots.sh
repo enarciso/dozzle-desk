@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Regenerates the README screenshots (docs/card.png, docs/dropdown.png) from the made-up demo
-# homelab in fixture_server.py, so no real server, hostname or container appears in them.
+# Regenerates the README screenshots (docs/card.png, docs/dropdown.png) and the GitHub social
+# preview (docs/social-preview.png) from the made-up demo homelab in fixture_server.py, so no real
+# server, hostname or container appears in them.
 #   scripts/screenshots.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,3 +18,4 @@ URL="http://127.0.0.1:$PORT"
 CARD=$!
 .build/debug/DozzleDesk --url "$URL" --render-png docs/dropdown.png --render-delay "$DELAY" --render-popover
 wait "$CARD"
+swift scripts/make-social.swift docs/card.png Assets/icon-1024.png docs/social-preview.png
