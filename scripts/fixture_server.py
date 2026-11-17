@@ -17,6 +17,9 @@ Authentication and proxies (combine freely):
   --drop-after 8                        end each event stream after 8 s (exercises reconnects)
 Dozzle modes:
   --mode swarm | --mode k8s             the data shapes Dozzle sends in Swarm and Kubernetes mode
+Logs: /api/hosts/{id}/logs/stream serves made-up lines (about 1/s per host), honouring
+  since= and levels= the way Dozzle does: no levels means no lines.
+  --log-rate 50                         lines per second per host, for load testing the panel
   kill the process                                             # simulates Dozzle going down
 
 Point the app at it:  .build/debug/DozzleDesk --url http://127.0.0.1:9911 --grace 20 --stall 6
@@ -102,6 +105,22 @@ SWARM_CONTAINERS = [
     for i, (name, host, health, mem) in enumerate([
         ("media_jellyfin.1.k2j4h5g6f7d8", "N1", "healthy", 1.5e9), ("media_sonarr.1.a1s2d3f4g5h6", "N2", None, 3e8),
         ("media_radarr.1.q1w2e3r4t5y6", "N2", "unhealthy", 3.2e8)], start=0x51)
+]
+
+
+# Made-up log lines for the logs panel: (level, stream, message). JSON-object and ANSI-colored
+# messages exercise the app's flattening and cleaning.
+LOG_LINES = [
+    ("info", "stdout", "GET /api/health 200 1.2ms"),
+    ("info", "stdout", "\x1b[32mINFO\x1b[0m scheduled job sync-library finished in 2.4s"),
+    ("debug", "stdout", "cache hit ratio 0.93 (keys=1204)"),
+    ("unknown", "stdout", "Listening on 0.0.0.0:8080"),
+    ("warn", "stderr", "slow query took 1840ms: SELECT * FROM assets WHERE owner_id = $1"),
+    ("info", "stdout", {"level": "info", "msg": "request completed", "status": 200, "path": "/sync", "ms": 38}),
+    ("error", "stderr", "upstream connect error: connection refused (retrying in 5s)"),
+    ("trace", "stdout", "tick 4512 queue=0"),
+    ("info", "stdout", "Backup snapshot 2026-11-07 completed: 1.2 GB, 3412 files"),
+    ("warn", "stdout", {"level": "warn", "msg": "certificate expires soon", "days": 12}),
 ]
 
 
@@ -198,6 +217,13 @@ def make_handler(args):
                 if path == "/login":
                     return self.send_plain(307, headers={"Location": "/"})
                 return self.page({"version": version, "authProvider": auth_provider, "mode": args.mode, "hosts": hosts})
+            if path.startswith("/api/hosts/") and path.endswith("/logs/stream"):
+                if args.auth or not self.signed_in():
+                    return self.send_plain(401, b"unauthorized")
+                host = path[len("/api/hosts/"):-len("/logs/stream")]
+                if host not in mem_total:
+                    return self.send_plain(404, b"host not found")
+                return self.log_stream(host, parse_qs(self.path.partition("?")[2], keep_blank_values=True))
             if self.path.startswith("/api/events/stream"):
                 if args.auth or not self.signed_in():
                     return self.send_plain(401, b"unauthorized")
@@ -207,6 +233,46 @@ def make_handler(args):
         def emit(self, event, data):
             self.wfile.write(f"event: {event}\ndata: {json.dumps(data)}\n\n".encode())
             self.wfile.flush()
+
+        def log_stream(self, host, query):
+            levels = set(query.get("levels", []))
+            if "since" not in query:
+                print("fixture: log stream without since= (Dozzle would replay everything)", flush=True)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.close_connection = True
+            mine = [c for c in containers if c["host"] == host and c["state"] in ("running", "restarting")]
+            rate = args.log_rate
+            n = 0
+
+            def send(ts):
+                nonlocal n
+                c = random.choice(mine)
+                level, stream, msg = random.choice(LOG_LINES)
+                n += 1
+                if level not in levels:
+                    return
+                self.wfile.write(("data: " + json.dumps({"t": "complex" if isinstance(msg, dict) else "simple",
+                    "m": msg, "ts": int(ts * 1000), "id": n, "l": level, "s": stream, "c": c["id"]}) + "\n\n").encode())
+
+            try:
+                if not mine:
+                    while True:
+                        self.wfile.write(b":ping\n\n")
+                        self.wfile.flush()
+                        time.sleep(10)
+                now = time.time()
+                for i in range(8):  # a little backfill, as if since= reached back a few seconds
+                    send(now - 8 + i)
+                self.wfile.flush()
+                while True:
+                    time.sleep(random.uniform(0.5, 1.5) / rate)
+                    send(time.time())
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ssl.SSLError):
+                print(f"fixture: log stream for {host} closed", flush=True)
 
         def stream(self):
             self.send_response(200)
@@ -278,6 +344,7 @@ def main():
     p.add_argument("--forward-proxy", action="store_true")
     p.add_argument("--portal", metavar="URL")
     p.add_argument("--tls", nargs=2, metavar=("CERT", "KEY"))
+    p.add_argument("--log-rate", type=float, default=1.0)
     args = p.parse_args()
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(args))
     srv.daemon_threads = True

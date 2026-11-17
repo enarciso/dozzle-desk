@@ -2,7 +2,7 @@ import AppKit
 import DozzleCore
 import SwiftUI
 
-/// Dev tool: `DozzleDesk --render-png out.png [--render-when live|lost] [--render-delay 3] [--render-popover]`
+/// Dev tool: `DozzleDesk --render-png out.png [--render-when live|lost] [--render-delay 3] [--render-popover] [--render-logs]`
 /// connects for real, waits until the requested state, renders one frame offscreen, exits.
 /// No window, no menu bar item, no lock.
 @MainActor
@@ -41,7 +41,13 @@ enum RenderMode {
                 }
             })
         self.link = link
-        Task { await link.start() }
+        // --render-logs: include the logs panel (lines need the render delay to arrive).
+        let logs = CommandLine.arguments.contains("--render-logs")
+        model.showLogs = logs
+        Task {
+            await link.start()
+            if logs { await link.setLogs(.info) }
+        }
     }
 
     private static func render(model: DeskModel, to path: String) {

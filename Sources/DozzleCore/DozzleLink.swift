@@ -11,10 +11,12 @@ public struct LinkStatus: Sendable, Equatable {
     public var nextRetryIn: TimeInterval?
     public var networkAvailable: Bool
     public var endpoint: String
+    /// The logs panel's lines; nil while the panel is off.
+    public var logs: LogFeed?
 
     public static func initial(endpoint: String) -> LinkStatus {
         LinkStatus(phase: .preflight, snapshot: nil, staleSince: nil, graceRemaining: nil,
-                   nextRetryIn: nil, networkAvailable: true, endpoint: endpoint)
+                   nextRetryIn: nil, networkAvailable: true, endpoint: endpoint, logs: nil)
     }
 }
 
@@ -56,6 +58,18 @@ public actor DozzleLink {
     private let monitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: AppIdentity.id + ".path")
 
+    // Logs panel: one log stream per host, only while it's on, visible and the link is live.
+    /// At most this many hosts are tailed at once (each one is a long-lived connection).
+    public static let maxLogHosts = 12
+    /// Seconds of recent lines fetched when a log stream (re)starts, so the panel isn't empty.
+    private static let logBackfill: TimeInterval = 30
+    private var logLevel: LogLevel?
+    private var logsVisible = true
+    private var logTasks: [String: Task<Void, Never>] = [:]
+    private var logStreaming: Set<String> = []
+    private var logs = LogBuffer()
+    private var logsReceived = 0
+
     public init(config: DeskConfig,
                 onStatus: @escaping @Sendable (LinkStatus) -> Void,
                 onExit: @escaping @Sendable (ExitReason) -> Void) {
@@ -68,7 +82,7 @@ public actor DozzleLink {
         cfg.timeoutIntervalForRequest = 15          // idle timeout between packets
         cfg.timeoutIntervalForResource = 60 * 60 * 24 * 30
         cfg.waitsForConnectivity = false            // fail fast; we own the retry policy
-        cfg.httpMaximumConnectionsPerHost = 2
+        cfg.httpMaximumConnectionsPerHost = 2 + Self.maxLogHosts   // events + requests + log streams
         self.client = DozzleClient(config: config, configuration: cfg)
     }
 
@@ -94,6 +108,8 @@ public actor DozzleLink {
         loopTask?.cancel()
         tickTask?.cancel()
         monitor.cancel()
+        if logLevel != nil { log.info("logs panel received \(self.logsReceived) lines") }
+        stopLogStreams()
         client.invalidate()
         _ = await loopTask?.value
         _ = await tickTask?.value
@@ -106,6 +122,7 @@ public actor DozzleLink {
         sleeping = true
         machine.willSleep()
         attemptTask?.cancel()
+        reconcileLogs()
         publish()
     }
 
@@ -142,6 +159,7 @@ public actor DozzleLink {
         finished = true
         machine.exit(reason)
         attemptTask?.cancel()
+        reconcileLogs()
         log.notice("exiting: \(reason.rawValue, privacy: .public)")
         publish()
         onExit(reason)
@@ -226,6 +244,7 @@ public actor DozzleLink {
                 return
             }
             state.sampleHistory(now: now)
+            reconcileLogs()
             publish()
         }
     }
@@ -354,6 +373,7 @@ public actor DozzleLink {
         if ev.event == "containers-changed", !machine.phase.isLive {
             machine.becameLive(now: now)
             log.info("live: \(self.state.containers.count) containers on \(self.state.hosts.count) hosts")
+            reconcileLogs()
             publish()
         }
     }
@@ -374,6 +394,113 @@ public actor DozzleLink {
             graceRemaining: machine.graceRemaining(now: now),
             nextRetryIn: nextAttemptAt.map { max(0, $0.timeIntervalSince(now)) },
             networkAvailable: pathOK,
-            endpoint: config.displayHost))
+            endpoint: config.displayHost,
+            logs: logLevel.map { LogFeed(level: $0, lines: logs.newest, rate: logs.rate(now: now),
+                                         streaming: logStreaming.count, hosts: logTasks.count) }))
+    }
+
+    // MARK: Logs panel
+
+    /// Turns the logs panel on at a level threshold, or off (nil). Changing the level restarts
+    /// the log streams and keeps the lines the new level still shows.
+    public func setLogs(_ level: LogLevel?) {
+        guard level != logLevel else { return }
+        let wasOn = logLevel != nil
+        logLevel = level
+        stopLogStreams()
+        if let level, wasOn { logs.filter(level) } else { logs.removeAll() }
+        reconcileLogs()
+        publish()
+    }
+
+    /// Whether anything shows the panel right now (card on, or dropdown open, and displays awake).
+    /// Log streams only run while it's visible.
+    public func setLogsVisible(_ visible: Bool) {
+        guard visible != logsVisible else { return }
+        logsVisible = visible
+        reconcileLogs()
+    }
+
+    private func stopLogStreams() {
+        logTasks.values.forEach { $0.cancel() }
+        logTasks.removeAll()
+        logStreaming.removeAll()
+    }
+
+    /// Starts or stops per-host log streams to match what should run now.
+    private func reconcileLogs() {
+        var want: [String] = []
+        if let level = logLevel, logsVisible, machine.phase.isLive, !sleeping, !finished, !stopped {
+            want = Array(state.hosts.values.filter(\.available).map(\.id).sorted().prefix(Self.maxLogHosts))
+            for id in want where logTasks[id] == nil {
+                logTasks[id] = Task { await self.streamLogs(host: id, level: level) }
+            }
+        }
+        for (id, task) in logTasks where !want.contains(id) {
+            task.cancel()
+            logTasks[id] = nil
+            logStreaming.remove(id)
+        }
+    }
+
+    /// Tails one host's logs until cancelled, reconnecting with a backoff. Never signs in by
+    /// itself: the main stream keeps the Dozzle session fresh, and a refused log request just
+    /// waits for the next try.
+    private func streamLogs(host: String, level: LogLevel) async {
+        var failures = 0
+        while !Task.isCancelled {
+            do {
+                let url = config.hostLogsURL(host: host, since: Date().addingTimeInterval(-Self.logBackfill), level: level)
+                // Quiet hosts can go a while between lines; Dozzle pings, but give it room.
+                var req = client.request(url, timeout: 120)
+                req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                req.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+                let (bytes, resp) = try await client.bytes(req)
+                let task = bytes.task
+                guard resp.statusCode == 200 else {
+                    task.cancel()
+                    throw LinkError.http(resp.statusCode)
+                }
+                logStreaming.insert(host)
+                log.info("log stream for \(host, privacy: .public) connected")
+                try await withTaskCancellationHandler {
+                    var parser = SSEParser(maxLineBytes: 256 * 1024)
+                    for try await byte in bytes {
+                        guard let ev = parser.feed(byte) else { continue }
+                        failures = 0
+                        if ev.event == "message" { addLog(ev, host: host) }
+                    }
+                } onCancel: {
+                    task.cancel()
+                }
+                throw LinkError.ended
+            } catch {
+                if Task.isCancelled { break }
+                log.info("log stream for \(host, privacy: .public) ended: \(String(describing: error), privacy: .public)")
+            }
+            logStreaming.remove(host)
+            failures += 1
+            let delay = [2.0, 5, 10, 30][min(failures, 4) - 1]
+            try? await Task.sleep(for: .seconds(delay))
+        }
+        logStreaming.remove(host)
+    }
+
+    private func addLog(_ ev: SSEEvent, host: String) {
+        guard let level = logLevel, let e = DzLogEvent.parse(ev.data) else { return }
+        let severity = LogLine.Severity(dozzle: e.l)
+        // Dozzle filters by level already; this covers a stream still closing after a level change.
+        guard level.includes(severity) else { return }
+        let text = e.text
+        guard !text.isEmpty else { return }
+        let raw = e.c ?? ""
+        let key = HomelabState.key(raw)
+        let container = state.containers[key]
+        let line = LogLine(id: 0, time: e.time ?? Date(), containerId: key,
+                           containerName: container?.name ?? String(raw.prefix(12)),
+                           hostId: container?.hostId ?? host, severity: severity,
+                           stderr: e.s == "stderr", text: text)
+        logsReceived += 1
+        logs.add(line, key: "\(raw)|\(e.ts ?? 0)|\(e.id ?? 0)|\(text)", now: Date())
     }
 }

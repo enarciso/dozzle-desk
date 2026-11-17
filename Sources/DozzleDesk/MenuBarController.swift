@@ -14,6 +14,11 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
     private let showCardItem = NSMenuItem(title: "Show Desktop Card", action: nil, keyEquivalent: "")
     private let clickThroughItem = NSMenuItem(title: "Click-through", action: nil, keyEquivalent: "")
     private let opacityItem = NSMenuItem(title: "Opacity", action: nil, keyEquivalent: "")
+    private let showLogsItem = NSMenuItem(title: "Show Logs", action: nil, keyEquivalent: "")
+    private let logLevelItem = NSMenuItem(title: "Log Level", action: nil, keyEquivalent: "")
+    private var logLevelItems: [NSMenuItem] = []
+    /// Called when the dropdown opens (true) or closes (false).
+    var onPopoverShown: ((Bool) -> Void)?
     private lazy var resetItem = makeItem("Reset Position", shortcut: "") { $0.resetPosition() }
     private var opacityItems: [NSMenuItem] = []
     private var lastHeader = ""
@@ -70,6 +75,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         popover.contentViewController = controller
         NSApp.activate()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        onPopoverShown?(true)
     }
 
     func closePopover() {
@@ -78,6 +84,7 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         popover.contentViewController = nil
+        onPopoverShown?(false)
     }
 
     // MARK: Right-click menu
@@ -111,6 +118,20 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         menu.addItem(opacityItem)
         menu.addItem(resetItem)
         menu.addItem(.separator())
+        showLogsItem.target = self
+        showLogsItem.action = #selector(toggleShowLogs)
+        menu.addItem(showLogsItem)
+        let levelMenu = NSMenu()
+        for level in LogLevel.allCases {
+            let mi = NSMenuItem(title: level.title, action: #selector(pickLogLevel(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = level.rawValue
+            levelMenu.addItem(mi)
+            logLevelItems.append(mi)
+        }
+        logLevelItem.submenu = levelMenu
+        menu.addItem(logLevelItem)
+        menu.addItem(.separator())
         menu.addItem(makeItem("Quit DozzleDesk", shortcut: "q") { $0.quit() })
     }
 
@@ -135,6 +156,15 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         model.actions?.setShowCard(!model.showCard)
     }
 
+    @objc private func toggleShowLogs() {
+        model.actions?.setShowLogs(!model.showLogs)
+    }
+
+    @objc private func pickLogLevel(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let level = LogLevel(rawValue: raw) else { return }
+        model.actions?.setLogLevel(level)
+    }
+
     @objc private func toggleClickThrough() {
         model.actions?.setClickThrough(!model.clickThrough)
     }
@@ -149,6 +179,11 @@ final class MenuBarController: NSObject, NSMenuDelegate, NSPopoverDelegate {
         // Card-only options do nothing in dropdown-only mode.
         for mi in [clickThroughItem, opacityItem, resetItem] { mi.isEnabled = model.showCard }
         clickThroughItem.state = model.clickThrough ? .on : .off
+        showLogsItem.state = model.showLogs ? .on : .off
+        logLevelItem.isEnabled = model.showLogs
+        for mi in logLevelItems {
+            mi.state = (mi.representedObject as? String) == model.logLevel.rawValue ? .on : .off
+        }
         for mi in opacityItems {
             mi.state = abs((mi.representedObject as? Double ?? 0) - model.opacity) < 0.01 ? .on : .off
         }

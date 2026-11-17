@@ -28,6 +28,32 @@ remembered across launches. Launching DozzleDesk again while it's running opens 
 app has to close (Dozzle unreachable), the card briefly reappears with the closing message, so it never
 vanishes silently. `--no-card` / `--card` override the saved choice for a single launch.
 
+**Logs panel.** Turn on **Show Logs** (dropdown options button or right-click menu) for a live tail of
+every container on every host, under Top CPU / Top memory on the card and at the bottom of the
+dropdown. There's no filtering by container; **Log Level** chooses how much to show:
+
+| Log Level | Shows |
+|---|---|
+| Errors | fatal and error lines |
+| Warnings and Errors | plus warnings |
+| Info and Above (default) | plus info, and lines Dozzle couldn't assign a level to (plain output) |
+| Debug and Above | plus debug |
+| Everything (Trace) | every line |
+
+Each line shows the time, the container (colored by name) and the message. Errors are red and
+warnings amber. ANSI colors are stripped, and JSON logs show their message followed by the other
+fields. Click a line to open that container in Dozzle. The header shows lines per second, and warns
+when some hosts' log streams aren't connected.
+
+The panel is **off by default** and remembered across launches. Logs can contain tokens, email
+addresses or internal hostnames, and the card is visible to anyone who can see your screen. Log
+streams run only while the panel is on and visible: the card is showing or the dropdown is open, and
+the displays are awake. They stop while the main connection is lost and restart with it.
+
+<p align="center">
+  <img src="docs/card-logs.png" width="440" alt="The desktop card with the logs panel turned on: the eight newest log lines from several containers, each with its time and a colored container name">
+</p>
+
 ## Requirements
 - macOS 14 or later, on Apple silicon or Intel.
 - A Dozzle server in server, Swarm or Kubernetes mode. It can run without login, with Dozzle's own
@@ -137,6 +163,7 @@ For scripting and `--check`, these environment variables replace the saved login
   - containers that exited or restarted in the last 10 minutes
   - hosts Dozzle can't reach
 - **Top 5 containers** by CPU and by memory.
+- **Logs** (optional): the newest lines from every container, at the log level you choose.
 
 Click a host or container to open it in Dozzle. Drag the card to move it.
 
@@ -187,8 +214,9 @@ screenshots in `docs/` and the GitHub social preview (`docs/social-preview.png`,
 under Settings → General → Social preview), so no real server or container names appear in them.
 `scripts/make-icon.sh` redraws the app icon (`Assets/AppIcon.icns`) from `scripts/make-icon.swift`.
 `scripts/test.sh` wraps `swift test` with the flags Swift Testing needs under the Command Line Tools.
-`--render-png out.png [--render-when live|lost] [--render-delay 3] [--render-popover]` renders one
-frame offscreen and exits.
+`--render-png out.png [--render-when live|lost] [--render-delay 3] [--render-popover] [--render-logs]`
+renders one frame offscreen and exits. The fixture serves made-up log lines on Dozzle's per-host log
+streams; `--log-rate 50` makes them busier.
 
 ### Releasing
 Push a version tag. The [Release workflow](.github/workflows/release.yml) then runs the tests,
@@ -218,6 +246,10 @@ scripts/uninstall.sh                  # removes the app, its preferences, suppor
   displays sleep.
 - **Bounded memory:** each SSE line is capped at 8 MB (Dozzle's largest line is around 400 KB), and
   history uses fixed 60-point ring buffers.
+- **Container logs are opt-in.** The logs panel is off until you turn it on. Log lines are kept in
+  memory only (the newest 200, each cut to 300 characters) and are never written to disk.
+- **Log streams are bounded:** one connection per host (at most 12), started from 30 seconds ago
+  rather than replaying each container's history.
 - **Nothing system-level:** no sudo, entitlements, login items or LaunchAgents.
 - **One instance at a time,** enforced with `flock` on `~/Library/Application Support/DozzleDesk/lock`.
 - **Logs** go to Console.app:

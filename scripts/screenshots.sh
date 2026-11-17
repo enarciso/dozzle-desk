@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates the README screenshots (docs/card.png, docs/dropdown.png) and the GitHub social
+# Regenerates the README screenshots (docs/card.png, docs/dropdown.png, docs/card-logs.png) and the GitHub social
 # preview (docs/social-preview.png) from the made-up demo homelab in fixture_server.py, so no real
 # server, hostname or container appears in them.
 #   scripts/screenshots.sh
@@ -16,6 +16,8 @@ mkdir -p docs
 URL="http://127.0.0.1:$PORT"
 .build/debug/DozzleDesk --url "$URL" --render-png docs/card.png --render-delay "$DELAY" &
 CARD=$!
+.build/debug/DozzleDesk --url "$URL" --render-png docs/card-logs.png --render-delay "$DELAY" --render-logs &
+LOGS=$!
 .build/debug/DozzleDesk --url "$URL" --render-png docs/dropdown.png --render-delay "$DELAY" --render-popover
-wait "$CARD"
+wait "$CARD" "$LOGS"
 swift scripts/make-social.swift docs/card.png Assets/icon-1024.png docs/social-preview.png
