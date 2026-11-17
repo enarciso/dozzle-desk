@@ -8,7 +8,7 @@
    ```
 3. Enter your Dozzle address, e.g. `http://192.168.1.20:8080`.
 
-**Requirements:** macOS 14 or later, Apple silicon or Intel (universal binary). Your Dozzle server must not require login (`DOZZLE_AUTH_PROVIDER=none`).
+**Requirements:** macOS 14 or later, Apple silicon or Intel (universal binary). Works with Dozzle's own login (`DOZZLE_AUTH_PROVIDER=simple`), basic-auth or header-based proxies, and self-signed HTTPS; GitHub/OIDC-only sign-in isn't supported.
 
 ## Verify the download
 This zip was built by GitHub Actions from the tagged commit, not on anyone's laptop. To check:
