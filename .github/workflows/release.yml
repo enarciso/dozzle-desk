@@ -36,7 +36,7 @@ jobs:
       id-token: write        # sign the provenance attestation
       attestations: write    # store it
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Toolchain
         run: |
@@ -65,7 +65,7 @@ jobs:
 
       - name: Keep the build (trial runs)
         if: github.ref_type != 'tag'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: DozzleDesk-${{ env.VERSION }}
           path: |
@@ -75,7 +75,7 @@ jobs:
 
       - name: Attest build provenance
         if: github.ref_type == 'tag'
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/DozzleDesk-${{ env.VERSION }}.zip
 
