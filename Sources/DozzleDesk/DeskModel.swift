@@ -9,6 +9,8 @@ struct DeskActions {
     var setClickThrough: (Bool) -> Void
     var setOpacity: (Double) -> Void
     var setShowCard: (Bool) -> Void
+    var setShowLogs: (Bool) -> Void
+    var setLogLevel: (LogLevel) -> Void
     var resetPosition: () -> Void
     var changeURL: () -> Void
     var quit: () -> Void
@@ -29,6 +31,9 @@ final class DeskModel: ObservableObject {
     @Published var opacity: Double = 1
     /// false = dropdown-only mode.
     @Published var showCard = true
+    /// The logs panel (card and dropdown). Off by default: logs can contain secrets.
+    @Published var showLogs = false
+    @Published var logLevel: LogLevel = .default
     var dragChanged: (() -> Void)?
     var dragEnded: (() -> Void)?
 

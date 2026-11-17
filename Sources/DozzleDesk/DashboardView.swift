@@ -44,6 +44,10 @@ struct DashboardView: View {
                         allGood
                     }
                     if style == .desktop { topLists(snap) }
+                    if model.showLogs, let feed = status.logs {
+                        LogsPanel(feed: feed, rows: style == .desktop ? 8 : 6, live: isLive,
+                                  open: { model.open(model.config.containerPage($0.containerId)) })
+                    }
                 }
                 .opacity(isLive ? 1 : 0.45)
                 .saturation(isLive ? 1 : 0.15)
@@ -122,6 +126,16 @@ struct DashboardView: View {
                 Toggle("Show Desktop Card", isOn: Binding(
                     get: { model.showCard },
                     set: { model.actions?.setShowCard($0) }))
+                Divider()
+                Toggle("Show Logs", isOn: Binding(
+                    get: { model.showLogs },
+                    set: { model.actions?.setShowLogs($0) }))
+                Picker("Log Level", selection: Binding(
+                    get: { model.logLevel },
+                    set: { model.actions?.setLogLevel($0) })) {
+                    ForEach(LogLevel.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .disabled(!model.showLogs)
                 Divider()
                 Group {
                     Toggle("Click-through", isOn: Binding(
@@ -545,6 +559,140 @@ private struct ConnectionBanner: View {
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10).fill(tone.opacity(0.16)))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(tone.opacity(0.35)))
+    }
+}
+
+/// The newest log lines across every container, newest at the bottom, in a fixed height so
+/// the card doesn't jump as lines arrive.
+private struct LogsPanel: View {
+    let feed: LogFeed
+    let rows: Int
+    let live: Bool
+    let open: (LogLine) -> Void
+    private static let rowHeight: CGFloat = 15
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                SectionLabel("Logs")
+                Text(levelLabel)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Palette.tile))
+                Spacer(minLength: 4)
+                if live && feed.hosts > 0 && feed.streaming < feed.hosts {
+                    Text("\(feed.streaming)/\(feed.hosts) hosts")
+                        .font(.system(size: 9.5).monospacedDigit())
+                        .foregroundStyle(Palette.warn)
+                        .help("Some hosts' log streams aren't connected; retrying")
+                }
+                Text(rateLabel)
+                    .font(.system(size: 9.5).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                let lines = feed.lines.suffix(rows)
+                if lines.isEmpty {
+                    Text(placeholder)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Spacer(minLength: 0)
+                    ForEach(lines) { line in
+                        Button { open(line) } label: { LogRow(line: line) }
+                            .buttonStyle(.plain)
+                            .help("\(line.containerName) · \(line.severity.rawValue)\n\(line.text)")
+                    }
+                }
+            }
+            .frame(height: CGFloat(rows) * Self.rowHeight, alignment: .bottomLeading)
+            .clipped()
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.22)))
+    }
+
+    private var levelLabel: String {
+        switch feed.level {
+        case .error: return "errors"
+        case .warn: return "warn+"
+        case .info: return "info+"
+        case .debug: return "debug+"
+        case .trace: return "all"
+        }
+    }
+
+    private var rateLabel: String {
+        if feed.rate < 0.05 { return "quiet" }
+        return feed.rate < 10 ? String(format: "%.1f/s", feed.rate) : String(format: "%.0f/s", feed.rate)
+    }
+
+    private var placeholder: String {
+        if !live { return "Log streams paused" }
+        if feed.hosts == 0 { return "No hosts to read logs from" }
+        if feed.streaming == 0 { return "Connecting to log streams…" }
+        return "Waiting for log lines…"
+    }
+}
+
+private struct LogRow: View {
+    let line: LogLine
+    private static let nameColors: [Color] = [
+        Color(red: 0.45, green: 0.72, blue: 1.00), Color(red: 0.55, green: 0.85, blue: 0.65),
+        Color(red: 0.85, green: 0.65, blue: 1.00), Color(red: 1.00, green: 0.70, blue: 0.55),
+        Color(red: 0.50, green: 0.88, blue: 0.90), Color(red: 0.95, green: 0.80, blue: 0.45),
+        Color(red: 1.00, green: 0.60, blue: 0.78), Color(red: 0.70, green: 0.78, blue: 1.00),
+    ]
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(DashboardView.clock.string(from: line.time))
+                .font(.system(size: 9.5, design: .monospaced))
+                .foregroundStyle(.secondary)
+            RoundedRectangle(cornerRadius: 1).fill(mark).frame(width: 2, height: 10)
+            Text(line.containerName)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Self.color(for: line.containerName))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 92, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
+            Text(line.text)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(textColor)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .frame(height: 15)
+        .contentShape(Rectangle())
+    }
+
+    private var mark: Color {
+        switch line.severity {
+        case .fatal, .error: return Palette.bad
+        case .warn: return Palette.warn
+        case .debug, .trace: return Palette.idle
+        case .info, .unknown: return line.stderr ? Palette.warn.opacity(0.6) : Palette.ok.opacity(0.7)
+        }
+    }
+
+    private var textColor: Color {
+        switch line.severity {
+        case .fatal, .error: return Palette.bad
+        case .warn: return Palette.warn
+        case .debug, .trace: return .white.opacity(0.55)
+        case .info, .unknown: return .white.opacity(0.82)
+        }
+    }
+
+    /// A stable color per container name (String.hashValue changes every launch).
+    static func color(for name: String) -> Color {
+        let h = name.utf8.reduce(UInt32(5381)) { ($0 << 5) &+ $0 &+ UInt32($1) }
+        return nameColors[Int(h % UInt32(nameColors.count))]
     }
 }
 

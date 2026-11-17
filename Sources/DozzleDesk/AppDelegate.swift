@@ -97,10 +97,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.clickThrough = defaults.bool(forKey: "clickThrough")
         model.opacity = defaults.object(forKey: "opacity") == nil ? config.opacity : defaults.double(forKey: "opacity")
         model.showCard = config.showCard ?? (defaults.object(forKey: "showDesktopCard") as? Bool ?? true)
+        model.showLogs = defaults.bool(forKey: "showLogs")
+        model.logLevel = defaults.string(forKey: "logLevel").flatMap(LogLevel.init(rawValue:)) ?? .default
         if model.showCard { openPanel() }
 
         let menuBar = MenuBarController(model: model)
         menuBar.setEndpoint(config.displayHost)
+        menuBar.onPopoverShown = { [weak self] shown in
+            self?.popoverShown = shown
+            self?.updateLogStreams()
+        }
         self.menuBar = menuBar
 
         // Opening a Dozzle page from the dropdown also closes the dropdown.
@@ -133,6 +139,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.model?.showCard = on
                 UserDefaults.standard.set(on, forKey: "showDesktopCard")
                 if on { self.openPanel() } else { self.closePanel() }
+                self.updateLogStreams()
+            },
+            setShowLogs: { [weak self] on in
+                self?.model?.showLogs = on
+                UserDefaults.standard.set(on, forKey: "showLogs")
+                self?.updateLogStreams()
+            },
+            setLogLevel: { [weak self] level in
+                self?.model?.logLevel = level
+                UserDefaults.standard.set(level.rawValue, forKey: "logLevel")
+                self?.updateLogStreams()
             },
             resetPosition: { [weak self] in self?.panel?.resetPosition() },
             changeURL: { [weak self] in self?.showSetup() },
@@ -161,10 +178,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             })
         self.link = link
         Task { await link.start() }
+        updateLogStreams()
         log.info("watching \(config.baseURL.absoluteString, privacy: .public)")
     }
 
     private var lastPhase: LinkPhase?
+    private var popoverShown = false
+
+    /// Log streams run only while the logs panel is on and something shows it: the card, or the
+    /// open dropdown, with the displays awake.
+    private func updateLogStreams() {
+        guard let link, let model else { return }
+        let level: LogLevel? = model.showLogs ? model.logLevel : nil
+        let visible = (model.showCard || popoverShown) && !model.displayPaused
+        Task {
+            await link.setLogs(level)
+            await link.setLogsVisible(visible)
+        }
+    }
 
     private func apply(_ status: LinkStatus) {
         if status.phase != lastPhase {
@@ -397,10 +428,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         })
         workspaceObservers.append(ws.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.model?.displayPaused = true }
+            MainActor.assumeIsolated {
+                self?.model?.displayPaused = true
+                self?.updateLogStreams()
+            }
         })
         workspaceObservers.append(ws.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.model?.displayPaused = false }
+            MainActor.assumeIsolated {
+                self?.model?.displayPaused = false
+                self?.updateLogStreams()
+            }
         })
         distributedObservers.append(DistributedNotificationCenter.default().addObserver(
             forName: showNotification, object: nil, queue: .main) { [weak self] _ in
